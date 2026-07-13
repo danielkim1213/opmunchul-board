@@ -1,0 +1,47 @@
+:root {
+  --bg: #0b1120;
+  --bg-soft: #101a30;
+  --card: #131f38;
+  --card-border: #24344f;
+  --text: #e8edf6;
+  --text-dim: #93a1b8;
+  --orange: #f99e1a;
+  --orange-hover: #ffb347;
+  --blue: #218ffe;
+  --amber: #f5b942;
+  --green: #4ade80;
+  --red: #f87171;
+
+  font-family: 'Noto Sans KR', 'Rajdhani', system-ui, sans-serif;
+  line-height: 1.5;
+  color: var(--text);
+  background-color: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(900px 500px at 85% -10%, rgba(33, 143, 254, 0.18), transparent 60%),
+    radial-gradient(700px 420px at -10% 20%, rgba(249, 158, 26, 0.12), transparent 60%),
+    var(--bg);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
