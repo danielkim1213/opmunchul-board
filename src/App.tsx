@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import AuthFlow from './auth/AuthFlow'
 import { fetchMe, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
+import RankBadge from './components/RankBadge'
 import './App.css'
 
 const SAMPLE_POSTS = [
@@ -38,7 +39,13 @@ export default function App() {
           <div className="topbar__user">
             {user.avatar && <img src={user.avatar} alt="" />}
             <span className="topbar__tag">{user.battletag}</span>
-            <span className="topbar__rank">{user.rankLabel}</span>
+            <RankBadge
+              rankLabel={user.rankLabel}
+              rankIcon={user.rankIcon}
+              roleLabel={user.roleLabel}
+              mostHeroes={user.mostHeroes}
+              bracketed={false}
+            />
             <button className="btn btn--ghost btn--small" onClick={handleLogout}>
               로그아웃
             </button>
@@ -80,7 +87,13 @@ export default function App() {
               환영합니다, <span>{user.battletag}</span> 님
             </h1>
             <p>
-              인증 티어 <strong className="rank-pill">[{user.rankLabel}]</strong>{' '}
+              인증 티어{' '}
+              <RankBadge
+                rankLabel={user.rankLabel}
+                rankIcon={user.rankIcon}
+                roleLabel={user.roleLabel}
+                mostHeroes={user.mostHeroes}
+              />{' '}
               배지가 부여되었습니다.
             </p>
           </div>

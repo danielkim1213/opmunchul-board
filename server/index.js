@@ -4,8 +4,8 @@ import bcrypt from 'bcryptjs'
 import { randomBytes } from 'node:crypto'
 import db from './db.js'
 import {
-  fetchPlayerSummary,
-  getBestRank,
+  buildRankProfile,
+  isFetchedToday,
   isValidBattleTag,
   PlayerNotFoundError,
 } from './overfast.js'
@@ -13,17 +13,45 @@ import {
 const PORT = process.env.PORT || 3001
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30 // 30 days
 const BCRYPT_ROUNDS = 10
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || true // true = reflect request origin in dev
 
 const app = express()
-app.use(cors())
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN,
+    credentials: false,
+  }),
+)
 app.use(express.json())
 
 const normalize = (battletag) => battletag.trim().toLowerCase()
 
-const findUser = db.prepare('SELECT * FROM users WHERE battletag_key = ?')
+const findUser = db.prepare(`
+  SELECT
+    battletag_key, battletag, password_hash, rank_label, rank_icon,
+    rank_role, most_heroes, avatar, created_at, rank_fetched_at
+  FROM users
+  WHERE battletag_key = ?
+`)
 const insertUser = db.prepare(`
-  INSERT INTO users (battletag_key, battletag, password_hash, rank_label, rank_icon, avatar, created_at)
-  VALUES (@battletag_key, @battletag, @password_hash, @rank_label, @rank_icon, @avatar, @created_at)
+  INSERT INTO users (
+    battletag_key, battletag, password_hash, rank_label, rank_icon,
+    rank_role, most_heroes, avatar, created_at, rank_fetched_at
+  )
+  VALUES (
+    @battletag_key, @battletag, @password_hash, @rank_label, @rank_icon,
+    @rank_role, @most_heroes, @avatar, @created_at, @rank_fetched_at
+  )
+`)
+const updateRankDetails = db.prepare(`
+  UPDATE users
+  SET rank_label = @rank_label,
+      rank_icon = @rank_icon,
+      rank_role = @rank_role,
+      most_heroes = @most_heroes,
+      avatar = COALESCE(@avatar, avatar),
+      rank_fetched_at = @rank_fetched_at
+  WHERE battletag_key = @battletag_key
 `)
 const insertSession = db.prepare(`
   INSERT INTO sessions (token, battletag_key, created_at, expires_at)
@@ -32,14 +60,34 @@ const insertSession = db.prepare(`
 const findSession = db.prepare('SELECT * FROM sessions WHERE token = ?')
 const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?')
 
-/** Shape a user row for API responses (never expose the password hash). */
+function parseMostHeroes(raw) {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function toPublicUser(row) {
   return {
     battletag: row.battletag,
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
+    rankRole: row.rank_role ?? null,
+    roleLabel:
+      row.rank_role === 'tank'
+        ? '탱커'
+        : row.rank_role === 'damage'
+          ? '딜러'
+          : row.rank_role === 'support'
+            ? '서포터'
+            : null,
+    mostHeroes: parseMostHeroes(row.most_heroes),
     avatar: row.avatar,
     createdAt: row.created_at,
+    rankFetchedAt: row.rank_fetched_at ?? null,
   }
 }
 
@@ -65,11 +113,31 @@ function authenticate(req) {
 }
 
 /**
- * Step 2 of the auth flow: given a BattleTag, decide the branch.
- *  - registered  -> client shows the login (password) step
- *  - new + found -> client shows the sign-up step (with verified rank)
- *  - not found   -> 404 (nonexistent OR private profile)
+ * Refresh OverFast data at most once per UTC day per account.
+ * Later opens the same day read from SQLite only (no OverFast call).
  */
+async function ensureDailyRank(user) {
+  if (
+    isFetchedToday(user.rank_fetched_at) &&
+    user.rank_role &&
+    user.most_heroes
+  ) {
+    return user
+  }
+
+  const { summary, rank } = await buildRankProfile(user.battletag)
+  updateRankDetails.run({
+    battletag_key: user.battletag_key,
+    rank_label: rank.rankLabel,
+    rank_icon: rank.rankIcon,
+    rank_role: rank.rankRole,
+    most_heroes: JSON.stringify(rank.mostHeroes),
+    avatar: summary.avatar ?? null,
+    rank_fetched_at: Date.now(),
+  })
+  return findUser.get(user.battletag_key)
+}
+
 app.post('/api/auth/check', async (req, res) => {
   const battletag = String(req.body?.battletag ?? '').trim()
   if (!isValidBattleTag(battletag)) {
@@ -81,14 +149,17 @@ app.post('/api/auth/check', async (req, res) => {
     return res.json({ status: 'registered', battletag: existing.battletag })
   }
 
+  // New signup candidate — one OverFast lookup (queued / rate-limited).
   try {
-    const summary = await fetchPlayerSummary(battletag)
-    const best = getBestRank(summary)
+    const { summary, rank } = await buildRankProfile(battletag)
     return res.json({
       status: 'new',
       battletag,
-      rankLabel: best?.label ?? 'Unranked',
-      rankIcon: best?.rankIcon ?? null,
+      rankLabel: rank.rankLabel,
+      rankIcon: rank.rankIcon,
+      rankRole: rank.rankRole,
+      roleLabel: rank.roleLabel,
+      mostHeroes: rank.mostHeroes,
       avatar: summary.avatar ?? null,
       title: summary.title ?? null,
     })
@@ -115,10 +186,11 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(409).json({ error: 'ALREADY_REGISTERED' })
   }
 
-  // Re-verify against OverFast so the rank is authoritative (not client-supplied).
+  // Authoritative re-fetch on the server (queued). Prevents forged client ranks.
   let summary
+  let rank
   try {
-    summary = await fetchPlayerSummary(battletag)
+    ;({ summary, rank } = await buildRankProfile(battletag))
   } catch (err) {
     if (err instanceof PlayerNotFoundError) {
       return res.status(404).json({ error: 'NOT_FOUND' })
@@ -126,15 +198,18 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(502).json({ error: 'UPSTREAM_ERROR' })
   }
 
-  const best = getBestRank(summary)
+  const now = Date.now()
   const row = {
     battletag_key: normalize(battletag),
     battletag,
     password_hash: await bcrypt.hash(password, BCRYPT_ROUNDS),
-    rank_label: best?.label ?? 'Unranked',
-    rank_icon: best?.rankIcon ?? null,
+    rank_label: rank.rankLabel,
+    rank_icon: rank.rankIcon,
+    rank_role: rank.rankRole,
+    most_heroes: JSON.stringify(rank.mostHeroes),
     avatar: summary.avatar ?? null,
-    created_at: Date.now(),
+    created_at: now,
+    rank_fetched_at: now,
   }
   insertUser.run(row)
   const token = createSession(row.battletag_key)
@@ -145,7 +220,7 @@ app.post('/api/auth/login', async (req, res) => {
   const battletag = String(req.body?.battletag ?? '').trim()
   const password = String(req.body?.password ?? '')
 
-  const user = findUser.get(normalize(battletag))
+  let user = findUser.get(normalize(battletag))
   if (!user) {
     return res.status(404).json({ error: 'NOT_FOUND' })
   }
@@ -153,14 +228,28 @@ app.post('/api/auth/login', async (req, res) => {
   if (!ok) {
     return res.status(401).json({ error: 'BAD_PASSWORD' })
   }
+
+  try {
+    user = await ensureDailyRank(user)
+  } catch (err) {
+    console.warn('Daily rank refresh skipped:', err.message ?? err)
+  }
+
   const token = createSession(user.battletag_key)
   return res.json({ token, user: toPublicUser(user) })
 })
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   const auth = authenticate(req)
   if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
-  return res.json({ user: toPublicUser(auth.user) })
+
+  let user = auth.user
+  try {
+    user = await ensureDailyRank(user)
+  } catch (err) {
+    console.warn('Daily rank refresh skipped:', err.message ?? err)
+  }
+  return res.json({ user: toPublicUser(user) })
 })
 
 app.post('/api/auth/logout', (req, res) => {
@@ -169,6 +258,10 @@ app.post('/api/auth/logout', (req, res) => {
   return res.json({ ok: true })
 })
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`옵문철 게시판 auth server listening on http://localhost:${PORT}`)
+})
+server.on('error', (err) => {
+  console.error(err)
+  process.exit(1)
 })

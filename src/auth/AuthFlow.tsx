@@ -7,25 +7,26 @@ import {
   login as apiLogin,
   register as apiRegister,
 } from '../api/auth'
-import type { AuthUser } from '../api/auth'
+import type { AuthUser, MostHero } from '../api/auth'
+import RankBadge from '../components/RankBadge'
 
 const SEARCH_MIN_MS = 500
 
 type Step =
   | { name: 'input' }
   | { name: 'searching' }
-  // Branch A: account already registered on the server
   | { name: 'login'; battletag: string }
-  // Branch B: found on Blizzard (public profile) -> sign up
   | {
       name: 'register'
       battletag: string
       rankLabel: string
       rankIcon: string | null
+      rankRole: string | null
+      roleLabel: string | null
+      mostHeroes: MostHero[]
       avatar: string | null
       title: string | null
     }
-  // BattleTag not found (nonexistent or private profile)
   | { name: 'notFound' }
   | { name: 'error'; message: string }
 
@@ -45,7 +46,6 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Guards against out-of-order results when the user retries quickly
   const searchSeq = useRef(0)
 
   function resetToInput() {
@@ -65,18 +65,20 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
     setFormError(null)
 
     try {
-      // The 0.5s delay is purely cosmetic ("searching..." effect).
       const [result] = await Promise.all([checkBattleTag(tag), delay(SEARCH_MIN_MS)])
       if (seq !== searchSeq.current) return
 
       if (result.status === 'registered') {
-        setStep({ name: 'login', battletag: result.battletag }) // Branch A
+        setStep({ name: 'login', battletag: result.battletag })
       } else {
         setStep({
-          name: 'register', // Branch B
+          name: 'register',
           battletag: result.battletag,
           rankLabel: result.rankLabel,
           rankIcon: result.rankIcon,
+          rankRole: result.rankRole,
+          roleLabel: result.roleLabel,
+          mostHeroes: result.mostHeroes ?? [],
           avatar: result.avatar,
           title: result.title,
         })
@@ -249,10 +251,12 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
           <h2 className="auth-title auth-title--green">Profile Verified!</h2>
           <p className="auth-subtitle">
             We fetched your rank:{' '}
-            <span className="rank-pill">
-              {step.rankIcon && <img src={step.rankIcon} alt="" />}
-              [{step.rankLabel}]
-            </span>
+            <RankBadge
+              rankLabel={step.rankLabel}
+              rankIcon={step.rankIcon}
+              roleLabel={step.roleLabel}
+              mostHeroes={step.mostHeroes}
+            />
           </p>
 
           <div className="player-chip">

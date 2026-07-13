@@ -28,4 +28,16 @@ db.exec(`
   );
 `)
 
+/** Add columns introduced after the first schema without breaking existing DBs. */
+function ensureColumn(table, column, typeSql) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeSql}`)
+  }
+}
+
+ensureColumn('users', 'rank_role', 'TEXT')
+ensureColumn('users', 'most_heroes', 'TEXT') // JSON array of top heroes
+ensureColumn('users', 'rank_fetched_at', 'INTEGER') // last OverFast refresh (ms)
+
 export default db

@@ -1,13 +1,34 @@
-// Auth API client — talks to the local Express server (proxied at /api).
+// Auth API client — talks to Express.
+// Dev: Vite proxies /api → localhost:3001
+// Prod: set VITE_API_URL to the API origin (e.g. https://opmunchul-api.up.railway.app)
 
 const TOKEN_KEY = 'opmunchul.token'
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
+
+function apiUrl(path: string): string {
+  // path like "/auth/check" or full "/api/auth/me"
+  const p = path.startsWith('/api') ? path : `/api${path}`
+  return `${API_BASE}${p}`
+}
+
+export interface MostHero {
+  key: string
+  name: string
+  portrait: string | null
+  timePlayed: number
+  gamesPlayed: number
+}
 
 export interface AuthUser {
   battletag: string
   rankLabel: string
   rankIcon: string | null
+  rankRole: string | null
+  roleLabel: string | null
+  mostHeroes: MostHero[]
   avatar: string | null
   createdAt: number
+  rankFetchedAt?: number | null
 }
 
 export type CheckResult =
@@ -17,11 +38,13 @@ export type CheckResult =
       battletag: string
       rankLabel: string
       rankIcon: string | null
+      rankRole: string | null
+      roleLabel: string | null
+      mostHeroes: MostHero[]
       avatar: string | null
       title: string | null
     }
 
-/** Thrown when the server responds with a non-2xx status. */
 export class ApiError extends Error {
   code: string
   httpStatus: number
@@ -50,7 +73,7 @@ export function clearToken() {
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`/api${path}`, {
+  const res = await fetch(apiUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -63,7 +86,7 @@ async function handle<T>(res: Response): Promise<T> {
   try {
     data = await res.json()
   } catch {
-    // no/invalid JSON body
+    // ignore
   }
   if (!res.ok) {
     const err = data as { error?: string; message?: string } | null
@@ -100,11 +123,10 @@ export async function login(
   return user
 }
 
-/** Restore the session from a stored token, or null if none/expired. */
 export async function fetchMe(): Promise<AuthUser | null> {
   const token = getToken()
   if (!token) return null
-  const res = await fetch('/api/auth/me', {
+  const res = await fetch(apiUrl('/api/auth/me'), {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!res.ok) {
@@ -118,7 +140,7 @@ export async function fetchMe(): Promise<AuthUser | null> {
 export async function logout(): Promise<void> {
   const token = getToken()
   if (token) {
-    await fetch('/api/auth/logout', {
+    await fetch(apiUrl('/api/auth/logout'), {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {})
