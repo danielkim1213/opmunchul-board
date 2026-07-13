@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import AuthFlow from './auth/AuthFlow'
-import { clearSession, loadSession } from './auth/store'
-import type { StoredUser } from './auth/store'
+import { fetchMe, logout } from './api/auth'
+import type { AuthUser } from './api/auth'
 import './App.css'
 
 const SAMPLE_POSTS = [
@@ -12,10 +12,18 @@ const SAMPLE_POSTS = [
 ]
 
 export default function App() {
-  const [user, setUser] = useState<StoredUser | null>(() => loadSession())
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [restoring, setRestoring] = useState(true)
 
-  function handleLogout() {
-    clearSession()
+  useEffect(() => {
+    fetchMe()
+      .then(setUser)
+      .catch(() => setUser(null))
+      .finally(() => setRestoring(false))
+  }, [])
+
+  async function handleLogout() {
+    await logout()
     setUser(null)
   }
 
@@ -38,7 +46,11 @@ export default function App() {
         )}
       </header>
 
-      {!user ? (
+      {restoring ? (
+        <main className="board">
+          <div className="board__note">세션을 확인하는 중...</div>
+        </main>
+      ) : !user ? (
         <main className="landing">
           <section className="hero">
             <p className="hero__kicker">FOR OVERWATCH 2 PLAYERS</p>

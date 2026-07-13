@@ -534,6 +534,14 @@
   margin-top: 20px;
 }
 
+.not-found-message {
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 32ch;
+  margin: 8px 0 4px;
+}
+
 /* ---------- Footer ---------- */
 .footer {
   text-align: center;

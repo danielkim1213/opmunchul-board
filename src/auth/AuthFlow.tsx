@@ -1,37 +1,36 @@
 import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
-  getBestRank,
+  ApiError,
+  checkBattleTag,
   isValidBattleTag,
-  lookupPlayer,
-  PlayerNotFoundError,
-} from '../api/overfast'
-import type { PlayerSummary } from '../api/overfast'
-import {
-  findUser,
-  registerUser,
-  saveSession,
-  verifyPassword,
-} from './store'
-import type { StoredUser } from './store'
+  login as apiLogin,
+  register as apiRegister,
+} from '../api/auth'
+import type { AuthUser } from '../api/auth'
 
-const SEARCH_MIN_MS = 1500
+const SEARCH_MIN_MS = 500
 
 type Step =
   | { name: 'input' }
   | { name: 'searching' }
-  // Branch A: account already registered on this site
-  | { name: 'login'; user: StoredUser }
-  // Branch B: found on Blizzard but the OW2 profile is private
-  | { name: 'private'; summary: PlayerSummary }
-  // Branch C: found on Blizzard, public profile -> sign up
-  | { name: 'register'; summary: PlayerSummary; rankLabel: string; rankIcon?: string }
-  // BattleTag not found in the Blizzard database
+  // Branch A: account already registered on the server
+  | { name: 'login'; battletag: string }
+  // Branch B: found on Blizzard (public profile) -> sign up
+  | {
+      name: 'register'
+      battletag: string
+      rankLabel: string
+      rankIcon: string | null
+      avatar: string | null
+      title: string | null
+    }
+  // BattleTag not found (nonexistent or private profile)
   | { name: 'notFound' }
   | { name: 'error'; message: string }
 
 interface AuthFlowProps {
-  onAuthenticated: (user: StoredUser) => void
+  onAuthenticated: (user: AuthUser) => void
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -65,43 +64,34 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
     setConfirmPassword('')
     setFormError(null)
 
-    // Branch A: the BattleTag is already registered in our system
-    const existing = findUser(tag)
-    if (existing) {
-      await delay(SEARCH_MIN_MS)
-      if (seq !== searchSeq.current) return
-      setStep({ name: 'login', user: existing })
-      return
-    }
-
-    // New account: verify the profile through the OverFast (Blizzard) API
     try {
-      const [{ summary, isPublic }] = await Promise.all([
-        lookupPlayer(tag),
-        delay(SEARCH_MIN_MS),
-      ])
+      // The 0.5s delay is purely cosmetic ("searching..." effect).
+      const [result] = await Promise.all([checkBattleTag(tag), delay(SEARCH_MIN_MS)])
       if (seq !== searchSeq.current) return
 
-      if (!isPublic) {
-        setStep({ name: 'private', summary }) // Branch B
-        return
+      if (result.status === 'registered') {
+        setStep({ name: 'login', battletag: result.battletag }) // Branch A
+      } else {
+        setStep({
+          name: 'register', // Branch B
+          battletag: result.battletag,
+          rankLabel: result.rankLabel,
+          rankIcon: result.rankIcon,
+          avatar: result.avatar,
+          title: result.title,
+        })
       }
-
-      const best = getBestRank(summary) // Branch C
-      setStep({
-        name: 'register',
-        summary,
-        rankLabel: best?.label ?? 'Unranked',
-        rankIcon: best?.rankIcon,
-      })
     } catch (err) {
       if (seq !== searchSeq.current) return
-      if (err instanceof PlayerNotFoundError) {
+      if (err instanceof ApiError && err.code === 'NOT_FOUND') {
         setStep({ name: 'notFound' })
       } else {
         setStep({
           name: 'error',
-          message: err instanceof Error ? err.message : 'Unknown error occurred.',
+          message:
+            err instanceof ApiError && err.code === 'UPSTREAM_ERROR'
+              ? 'Blizzard 데이터베이스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'
+              : '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해 주세요.',
         })
       }
     }
@@ -123,14 +113,18 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
     if (step.name !== 'login') return
     setSubmitting(true)
     setFormError(null)
-    const ok = await verifyPassword(step.user, password)
-    setSubmitting(false)
-    if (!ok) {
-      setFormError('비밀번호가 올바르지 않습니다.')
-      return
+    try {
+      const user = await apiLogin(step.battletag, password)
+      onAuthenticated(user)
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.code === 'BAD_PASSWORD'
+          ? '비밀번호가 올바르지 않습니다.'
+          : '로그인에 실패했습니다. 다시 시도해 주세요.',
+      )
+    } finally {
+      setSubmitting(false)
     }
-    saveSession(step.user)
-    onAuthenticated(step.user)
   }
 
   async function handleRegister(e: FormEvent) {
@@ -145,15 +139,21 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
       return
     }
     setSubmitting(true)
-    const user = await registerUser({
-      battletag: battletag.trim(),
-      password,
-      rankLabel: step.rankLabel,
-      avatar: step.summary.avatar,
-    })
-    setSubmitting(false)
-    saveSession(user)
-    onAuthenticated(user)
+    setFormError(null)
+    try {
+      const user = await apiRegister(step.battletag, password)
+      onAuthenticated(user)
+    } catch (err) {
+      setFormError(
+        err instanceof ApiError && err.code === 'ALREADY_REGISTERED'
+          ? '이미 가입된 배틀태그입니다.'
+          : err instanceof ApiError && err.code === 'NOT_FOUND'
+            ? '계정을 찾을 수 없습니다. 배틀태그를 확인해주세요. 프로필 비공개 시 검색이 되지 않습니다.'
+            : '가입에 실패했습니다. 다시 시도해 주세요.',
+      )
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -201,19 +201,7 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
 
       {step.name === 'login' && (
         <form className="auth-step" onSubmit={handleLogin}>
-          <div className="player-chip">
-            {step.user.avatar && (
-              <img className="player-chip__avatar" src={step.user.avatar} alt="" />
-            )}
-            <div>
-              <div className="player-chip__tag">{step.user.battletag}</div>
-              <div className="player-chip__meta">{step.user.rankLabel}</div>
-            </div>
-          </div>
-
-          <h2 className="auth-title">
-            Welcome back, {step.user.battletag}!
-          </h2>
+          <h2 className="auth-title">Welcome back, {step.battletag}!</h2>
           <p className="auth-subtitle">Enter your password to log in.</p>
 
           <label className="field slide-in">
@@ -243,48 +231,6 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
         </form>
       )}
 
-      {step.name === 'private' && (
-        <div className="auth-step auth-step--amber">
-          <div className="alert-icon" aria-hidden>
-            <svg viewBox="0 0 24 24" width="44" height="44" fill="none">
-              <path
-                d="M12 3 2.5 20h19L12 3z"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinejoin="round"
-              />
-              <path d="M12 9.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <circle cx="12" cy="17.2" r="1" fill="currentColor" />
-            </svg>
-          </div>
-
-          <h2 className="auth-title auth-title--amber">Profile is Private!</h2>
-          <p className="auth-subtitle">
-            We found your Blizzard account, but your Overwatch 2 Profile is set
-            to <strong>[Private]</strong>. We need access to your tier data to
-            assign your verification badge.
-          </p>
-
-          <div className="instruction-box">
-            <div className="instruction-box__title">How to fix</div>
-            <div className="instruction-box__body">
-              In-Game Options → Social → Change &lsquo;Profile
-              Visibility&rsquo; to <strong>Public</strong>
-            </div>
-          </div>
-
-          <button
-            className="btn btn--amber btn--big"
-            onClick={() => void runSearch(battletag.trim())}
-          >
-            Retry Check
-          </button>
-          <button className="btn btn--ghost" onClick={resetToInput}>
-            Back
-          </button>
-        </div>
-      )}
-
       {step.name === 'register' && (
         <form className="auth-step" onSubmit={handleRegister}>
           <div className="verify-badge">
@@ -310,13 +256,13 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
           </p>
 
           <div className="player-chip">
-            {step.summary.avatar && (
-              <img className="player-chip__avatar" src={step.summary.avatar} alt="" />
+            {step.avatar && (
+              <img className="player-chip__avatar" src={step.avatar} alt="" />
             )}
             <div>
-              <div className="player-chip__tag">{battletag.trim()}</div>
+              <div className="player-chip__tag">{step.battletag}</div>
               <div className="player-chip__meta">
-                {step.summary.title ?? 'Overwatch 2 Player'}
+                {step.title ?? 'Overwatch 2 Player'}
               </div>
             </div>
           </div>
@@ -360,14 +306,26 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
 
       {step.name === 'notFound' && (
         <div className="auth-step auth-step--center">
-          <h2 className="auth-title auth-title--amber">BattleTag Not Found</h2>
-          <p className="auth-subtitle">
-            <strong>{battletag.trim()}</strong> 배틀태그를 Blizzard 데이터베이스에서
-            찾을 수 없습니다. 오타가 없는지 확인해 주세요. (대소문자와 숫자까지
-            정확해야 합니다)
+          <div className="alert-icon" aria-hidden>
+            <svg viewBox="0 0 24 24" width="44" height="44" fill="none">
+              <path
+                d="M12 3 2.5 20h19L12 3z"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+              <path d="M12 9.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="12" cy="17.2" r="1" fill="currentColor" />
+            </svg>
+          </div>
+
+          <p className="auth-subtitle not-found-message">
+            계정을 찾을 수 없습니다. 배틀태그를 확인해주세요. 프로필 비공개 시
+            검색이 되지 않습니다.
           </p>
+
           <button className="btn btn--primary btn--big" onClick={resetToInput}>
-            Try Again
+            다시 시도
           </button>
         </div>
       )}

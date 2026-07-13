@@ -6,11 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // Avoid browser CORS restrictions by proxying OverFast API calls in dev
-      '/overfast': {
-        target: 'https://overfast-api.tekrop.fr',
+      // Forward API calls to the local Express auth server
+      '/api': {
+        target: 'http://localhost:3001',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/overfast/, ''),
       },
     },
   },
