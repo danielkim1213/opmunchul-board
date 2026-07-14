@@ -72,11 +72,11 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
     }
   }
 
-  async function handleLink() {
+  async function handleLink(force = false) {
     setLinking(true)
     setFormError(null)
     try {
-      const result = await linkBlizzard()
+      const result = await linkBlizzard({ force })
       setLink(result)
     } catch (err) {
       if (err instanceof ApiError) {
@@ -342,15 +342,20 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
                     </div>
                   </div>
                 </div>
-                <button type="button" className="btn btn--ghost btn--small" onClick={handleLink}>
-                  다시 연동
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  onClick={() => handleLink(true)}
+                  disabled={linking}
+                >
+                  {linking ? '전환 중...' : '다른 계정으로 다시 연동'}
                 </button>
               </div>
             ) : (
               <button
                 type="button"
                 className="btn btn--blizzard btn--big"
-                onClick={handleLink}
+                onClick={() => handleLink(false)}
                 disabled={linking}
               >
                 {linking ? 'Blizzard 인증 대기 중...' : 'Blizzard 계정 연동'}

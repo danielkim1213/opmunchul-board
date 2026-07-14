@@ -106,6 +106,19 @@ async function get<T>(path: string): Promise<T> {
   return handle<T>(res)
 }
 
+async function authedPost<T>(path: string, body: unknown): Promise<T> {
+  const token = getToken()
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  return handle<T>(res)
+}
+
 export function checkUsername(username: string): Promise<{ available: boolean; username: string }> {
   return post('/auth/check-username', { username })
 }
@@ -122,10 +135,16 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
 /**
  * Kick off a Blizzard OAuth link in a popup and resolve once the account is
  * linked. Polls the server so it works across origins (dev proxy included).
+ *
+ * Pass `force: true` to route through Battle.net's logout page first, so a
+ * user who linked the wrong account gets the credential prompt again
+ * instead of silently reusing whatever Battle.net session is active in
+ * their browser.
  */
-export async function linkBlizzard(): Promise<BlizzardLink> {
+export async function linkBlizzard(options: { force?: boolean } = {}): Promise<BlizzardLink> {
+  const query = options.force ? '?force=1' : ''
   const { state, authorizeUrl } = await get<{ state: string; authorizeUrl: string }>(
-    '/auth/blizzard/start',
+    `/auth/blizzard/start${query}`,
   )
 
   const popup = window.open(
@@ -207,6 +226,15 @@ export async function login(username: string, password: string): Promise<AuthUse
     password,
   })
   setToken(token)
+  return user
+}
+
+/**
+ * Applies a completed Blizzard link (from `linkBlizzard`) to the currently
+ * logged-in account, changing which BattleTag it's tied to.
+ */
+export async function applyBlizzardLink(state: string): Promise<AuthUser> {
+  const { user } = await authedPost<{ user: AuthUser }>('/auth/blizzard/apply', { state })
   return user
 }
 

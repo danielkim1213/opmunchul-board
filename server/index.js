@@ -16,6 +16,7 @@ import {
   exchangeCodeForToken,
   fetchBlizzardUser,
   getAuthorizeUrl,
+  getSwitchAccountAuthorizeUrl,
   isBlizzardConfigured,
 } from './blizzard.js'
 
@@ -57,6 +58,9 @@ const findUser = db.prepare(`
 const findUserByBattletag = db.prepare(
   'SELECT username FROM users WHERE battletag_key = ?',
 )
+const findOtherUserByBattletag = db.prepare(
+  'SELECT username FROM users WHERE battletag_key = ? AND username_key != ?',
+)
 const insertUser = db.prepare(`
   INSERT INTO users (
     username_key, username, password_hash, battletag, battletag_key, blizzard_id,
@@ -66,6 +70,20 @@ const insertUser = db.prepare(`
 const updateRankDetails = db.prepare(`
   UPDATE users
   SET rank_label = ?,
+      rank_icon = ?,
+      rank_role = ?,
+      most_heroes = ?,
+      avatar = COALESCE(?, avatar),
+      rank_fetched_at = ?
+  WHERE username_key = ?
+`)
+
+const updateBattletagLink = db.prepare(`
+  UPDATE users
+  SET battletag = ?,
+      battletag_key = ?,
+      blizzard_id = ?,
+      rank_label = ?,
       rank_icon = ?,
       rank_role = ?,
       most_heroes = ?,
@@ -189,7 +207,7 @@ app.post('/api/auth/check-username', (req, res) => {
 /* ------------------------------------------------------------------ *
  * Blizzard OAuth link (register verification)
  * ------------------------------------------------------------------ */
-app.get('/api/auth/blizzard/start', (_req, res) => {
+app.get('/api/auth/blizzard/start', (req, res) => {
   if (!isBlizzardConfigured()) {
     return res.status(503).json({ error: 'OAUTH_NOT_CONFIGURED' })
   }
@@ -197,7 +215,12 @@ app.get('/api/auth/blizzard/start', (_req, res) => {
   const state = randomBytes(24).toString('hex')
   const now = Date.now()
   insertLink.run(state, now, now + LINK_TTL_MS)
-  return res.json({ state, authorizeUrl: getAuthorizeUrl(state) })
+  // `force=1` routes through Battle.net's logout page first so the user
+  // gets the credential prompt again instead of silently reusing whichever
+  // account is already signed in on this browser (see blizzard.js).
+  const force = req.query.force === '1' || req.query.force === 'true'
+  const authorizeUrl = force ? getSwitchAccountAuthorizeUrl(state) : getAuthorizeUrl(state)
+  return res.json({ state, authorizeUrl })
 })
 
 function renderPopupPage(title, message) {
@@ -312,6 +335,53 @@ app.get('/api/auth/blizzard/poll', (req, res) => {
     return res.json({ status: 'linked', battletag: link.battletag, ...profile })
   }
   return res.json({ status: 'pending' })
+})
+
+/**
+ * Apply a completed Blizzard link to the *currently logged-in* user.
+ * Lets an existing account correct/change which BattleTag it's tied to,
+ * without going through registration again.
+ */
+app.post('/api/auth/blizzard/apply', async (req, res) => {
+  const auth = authenticate(req)
+  if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+  const state = String(req.body?.state ?? '')
+  const link = findLink.get(state)
+  if (!link || link.status !== 'linked' || link.consumed) {
+    return res.status(400).json({ error: 'LINK_REQUIRED' })
+  }
+  if (link.expires_at < Date.now()) {
+    return res.status(400).json({ error: 'LINK_EXPIRED' })
+  }
+  const conflict = findOtherUserByBattletag.get(link.battletag_key, auth.user.username_key)
+  if (conflict) {
+    return res.status(409).json({ error: 'BATTLETAG_TAKEN' })
+  }
+
+  let profile
+  try {
+    profile = JSON.parse(link.profile ?? '{}')
+  } catch {
+    profile = {}
+  }
+
+  updateBattletagLink.run(
+    link.battletag,
+    link.battletag_key,
+    link.blizzard_id ?? null,
+    profile.rankLabel ?? 'Unranked',
+    profile.rankIcon ?? null,
+    profile.rankRole ?? null,
+    JSON.stringify(profile.mostHeroes ?? []),
+    profile.avatar ?? null,
+    Date.now(),
+    auth.user.username_key,
+  )
+  consumeLink.run(state)
+
+  const row = findUser.get(auth.user.username_key)
+  return res.json({ user: toPublicUser(row) })
 })
 
 /* ------------------------------------------------------------------ *

@@ -39,6 +39,20 @@ export function getAuthorizeUrl(state) {
   return `${OAUTH_BASE}/oauth/authorize?${params.toString()}`
 }
 
+/**
+ * Blizzard's OAuth authorize endpoint ignores `prompt=login` — if the
+ * browser already carries a Battle.net SSO cookie, `/oauth/authorize`
+ * silently re-approves the same account with no login prompt. The only
+ * documented workaround is to bounce through the logout endpoint first,
+ * which clears the SSO cookie and forces the credential screen back up
+ * before continuing to `authorize`. Use this when the user explicitly
+ * wants to link a *different* Blizzard account.
+ */
+export function getSwitchAccountAuthorizeUrl(state) {
+  const ref = encodeURIComponent(getAuthorizeUrl(state))
+  return `${OAUTH_BASE}/login/logout?ref=${ref}`
+}
+
 export async function exchangeCodeForToken(code) {
   const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')
   const body = new URLSearchParams({

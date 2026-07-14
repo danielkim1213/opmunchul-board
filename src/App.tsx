@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import AuthFlow from './auth/AuthFlow'
-import { fetchMe, logout } from './api/auth'
+import { ApiError, applyBlizzardLink, fetchMe, linkBlizzard, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
 import RankBadge from './components/RankBadge'
 import './App.css'
@@ -15,6 +15,7 @@ const SAMPLE_POSTS = [
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [restoring, setRestoring] = useState(true)
+  const [changingAccount, setChangingAccount] = useState(false)
 
   useEffect(() => {
     fetchMe()
@@ -26,6 +27,31 @@ export default function App() {
   async function handleLogout() {
     await logout()
     setUser(null)
+  }
+
+  async function handleChangeBlizzard() {
+    setChangingAccount(true)
+    try {
+      // force: true bounces through Battle.net logout first, so the
+      // credential screen shows up again instead of silently reusing
+      // whichever account is already signed in on this browser.
+      const link = await linkBlizzard({ force: true })
+      const updated = await applyBlizzardLink(link.state)
+      setUser(updated)
+      window.alert(`배틀태그가 ${updated.battletag} 로 변경되었습니다.`)
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'LINK_CANCELLED') {
+        // User closed the popup — nothing to report.
+      } else if (err instanceof ApiError && err.code === 'BATTLETAG_TAKEN') {
+        window.alert('이미 다른 계정에 연동된 배틀태그입니다.')
+      } else if (err instanceof ApiError && err.code === 'POPUP_BLOCKED') {
+        window.alert('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도해 주세요.')
+      } else {
+        window.alert('배틀태그 변경에 실패했습니다. 다시 시도해 주세요.')
+      }
+    } finally {
+      setChangingAccount(false)
+    }
   }
 
   return (
@@ -47,6 +73,13 @@ export default function App() {
               mostHeroes={user.mostHeroes}
               bracketed={false}
             />
+            <button
+              className="btn btn--ghost btn--small"
+              onClick={handleChangeBlizzard}
+              disabled={changingAccount}
+            >
+              {changingAccount ? '변경 중...' : '배틀태그 변경'}
+            </button>
             <button className="btn btn--ghost btn--small" onClick={handleLogout}>
               로그아웃
             </button>
