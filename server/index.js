@@ -258,10 +258,26 @@ app.post('/api/auth/logout', (req, res) => {
   return res.json({ ok: true })
 })
 
-const server = app.listen(PORT, () => {
-  console.log(`옵문철 게시판 auth server listening on http://localhost:${PORT}`)
+// Railway / Render health checks hit "/" — must return 200 or the deploy gets marked crashed.
+app.get('/', (_req, res) => {
+  res.status(200).json({ ok: true, service: 'opmunchul-board-api' })
+})
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true })
+})
+
+const HOST = process.env.HOST || '0.0.0.0'
+const server = app.listen(Number(PORT), HOST, () => {
+  console.log(`옵문철 게시판 auth server listening on http://${HOST}:${PORT}`)
 })
 server.on('error', (err) => {
-  console.error(err)
+  console.error('Server failed to start:', err)
   process.exit(1)
+})
+
+process.on('uncaughtException', (err) => {
+  console.error('uncaughtException:', err)
+})
+process.on('unhandledRejection', (err) => {
+  console.error('unhandledRejection:', err)
 })

@@ -1,9 +1,14 @@
 import Database from 'better-sqlite3'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const DB_PATH = join(__dirname, 'data.sqlite')
+// Railway Volume: set DATA_DIR=/data (and mount volume there)
+const dataDir = process.env.DATA_DIR || __dirname
+mkdirSync(dataDir, { recursive: true })
+const DB_PATH = join(dataDir, 'data.sqlite')
+console.log('SQLite path:', DB_PATH)
 
 const db = new Database(DB_PATH)
 db.pragma('journal_mode = WAL')
