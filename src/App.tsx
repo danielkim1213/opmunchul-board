@@ -38,7 +38,8 @@ export default function App() {
         {user && (
           <div className="topbar__user">
             {user.avatar && <img src={user.avatar} alt="" />}
-            <span className="topbar__tag">{user.battletag}</span>
+            <span className="topbar__tag">{user.username}</span>
+            <span className="topbar__bt">{user.battletag}</span>
             <RankBadge
               rankLabel={user.rankLabel}
               rankIcon={user.rankIcon}
@@ -62,18 +63,18 @@ export default function App() {
           <section className="hero">
             <p className="hero__kicker">FOR OVERWATCH 2 PLAYERS</p>
             <h1 className="hero__title">
-              티어 인증으로 시작하는
+              Blizzard 계정 인증으로
               <br />
-              진짜 옵치 커뮤니티
+              시작하는 진짜 옵치 커뮤니티
             </h1>
             <p className="hero__desc">
-              배틀태그 하나로 로그인부터 랭크 인증 배지까지. 비공개 프로필은
-              사절, 실력은 공개적으로 증명하세요.
+              원하는 아이디로 가입하고, Blizzard 계정 연동으로 배틀태그를
+              안전하게 인증하세요. 도용 없는 진짜 전적만 배지로 보여줍니다.
             </p>
             <ul className="hero__points">
-              <li>배틀태그 기반 원클릭 가입</li>
+              <li>원하는 아이디로 가입 + 중복확인</li>
+              <li>Blizzard OAuth 연동으로 배틀태그 인증</li>
               <li>Blizzard 전적 기반 티어 배지 자동 부여</li>
-              <li>티어 인증 유저만 참여하는 게시판</li>
             </ul>
           </section>
           <section className="auth-panel">
@@ -84,10 +85,10 @@ export default function App() {
         <main className="board">
           <div className="board__welcome">
             <h1>
-              환영합니다, <span>{user.battletag}</span> 님
+              환영합니다, <span>{user.username}</span> 님
             </h1>
             <p>
-              인증 티어{' '}
+              <span className="board__bt">{user.battletag}</span> · 인증 티어{' '}
               <RankBadge
                 rankLabel={user.rankLabel}
                 rankIcon={user.rankIcon}

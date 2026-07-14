@@ -1,128 +1,118 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ApiError,
-  checkBattleTag,
-  isValidBattleTag,
+  isValidPassword,
+  isValidUsername,
+  checkUsername,
+  linkBlizzard,
   login as apiLogin,
   register as apiRegister,
+  MIN_PASSWORD_LENGTH,
 } from '../api/auth'
-import type { AuthUser, MostHero } from '../api/auth'
+import type { AuthUser, BlizzardLink } from '../api/auth'
 import RankBadge from '../components/RankBadge'
 
-const SEARCH_MIN_MS = 500
-
-type Step =
-  | { name: 'input' }
-  | { name: 'searching' }
-  | { name: 'login'; battletag: string }
-  | {
-      name: 'register'
-      battletag: string
-      rankLabel: string
-      rankIcon: string | null
-      rankRole: string | null
-      roleLabel: string | null
-      mostHeroes: MostHero[]
-      avatar: string | null
-      title: string | null
-    }
-  | { name: 'notFound' }
-  | { name: 'error'; message: string }
+type Mode = 'login' | 'signup'
+type NameStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid'
 
 interface AuthFlowProps {
   onAuthenticated: (user: AuthUser) => void
 }
 
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
 export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
-  const [step, setStep] = useState<Step>({ name: 'input' })
-  const [battletag, setBattletag] = useState('')
-  const [inputError, setInputError] = useState<string | null>(null)
+  const [mode, setMode] = useState<Mode>('login')
 
+  // Shared credential fields
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+
+  // Signup-only state
+  const [nameStatus, setNameStatus] = useState<NameStatus>('idle')
+  const [checking, setChecking] = useState(false)
+  const [link, setLink] = useState<BlizzardLink | null>(null)
+  const [linking, setLinking] = useState(false)
+
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const searchSeq = useRef(0)
-
-  function resetToInput() {
-    searchSeq.current += 1
-    setStep({ name: 'input' })
+  function switchMode(next: Mode) {
+    setMode(next)
     setPassword('')
     setConfirmPassword('')
     setFormError(null)
-    setInputError(null)
+    setNameStatus('idle')
+    setLink(null)
   }
 
-  async function runSearch(tag: string) {
-    const seq = ++searchSeq.current
-    setStep({ name: 'searching' })
-    setPassword('')
-    setConfirmPassword('')
+  function handleUsernameChange(value: string) {
+    setUsername(value)
+    setNameStatus('idle')
     setFormError(null)
-
-    try {
-      const [result] = await Promise.all([checkBattleTag(tag), delay(SEARCH_MIN_MS)])
-      if (seq !== searchSeq.current) return
-
-      if (result.status === 'registered') {
-        setStep({ name: 'login', battletag: result.battletag })
-      } else {
-        setStep({
-          name: 'register',
-          battletag: result.battletag,
-          rankLabel: result.rankLabel,
-          rankIcon: result.rankIcon,
-          rankRole: result.rankRole,
-          roleLabel: result.roleLabel,
-          mostHeroes: result.mostHeroes ?? [],
-          avatar: result.avatar,
-          title: result.title,
-        })
-      }
-    } catch (err) {
-      if (seq !== searchSeq.current) return
-      if (err instanceof ApiError && err.code === 'NOT_FOUND') {
-        setStep({ name: 'notFound' })
-      } else {
-        setStep({
-          name: 'error',
-          message:
-            err instanceof ApiError && err.code === 'UPSTREAM_ERROR'
-              ? 'Blizzard 데이터베이스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.'
-              : '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해 주세요.',
-        })
-      }
-    }
   }
 
-  function handleNext(e: FormEvent) {
-    e.preventDefault()
-    const tag = battletag.trim()
-    if (!isValidBattleTag(tag)) {
-      setInputError('올바른 배틀태그 형식이 아닙니다. 예: Tracer#1234')
+  async function handleCheckUsername() {
+    if (!isValidUsername(username)) {
+      setNameStatus('invalid')
       return
     }
-    setInputError(null)
-    void runSearch(tag)
+    setChecking(true)
+    setFormError(null)
+    try {
+      const { available } = await checkUsername(username)
+      setNameStatus(available ? 'available' : 'taken')
+    } catch (err) {
+      setNameStatus(err instanceof ApiError && err.code === 'INVALID_USERNAME' ? 'invalid' : 'idle')
+      if (!(err instanceof ApiError)) {
+        setFormError('서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+      }
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  async function handleLink() {
+    setLinking(true)
+    setFormError(null)
+    try {
+      const result = await linkBlizzard()
+      setLink(result)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setFormError(
+          err.code === 'OAUTH_NOT_CONFIGURED'
+            ? 'Blizzard 연동이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.'
+            : err.code === 'POPUP_BLOCKED'
+              ? '팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도해 주세요.'
+              : err.code === 'LINK_CANCELLED'
+                ? 'Blizzard 연동이 취소되었습니다.'
+                : err.code === 'LINK_TIMEOUT' || err.code === 'LINK_EXPIRED'
+                  ? '연동 시간이 만료되었습니다. 다시 시도해 주세요.'
+                  : 'Blizzard 연동에 실패했습니다. 다시 시도해 주세요.',
+        )
+      } else {
+        setFormError('Blizzard 연동에 실패했습니다. 다시 시도해 주세요.')
+      }
+    } finally {
+      setLinking(false)
+    }
   }
 
   async function handleLogin(e: FormEvent) {
     e.preventDefault()
-    if (step.name !== 'login') return
     setSubmitting(true)
     setFormError(null)
     try {
-      const user = await apiLogin(step.battletag, password)
+      const user = await apiLogin(username, password)
       onAuthenticated(user)
     } catch (err) {
       setFormError(
-        err instanceof ApiError && err.code === 'BAD_PASSWORD'
-          ? '비밀번호가 올바르지 않습니다.'
-          : '로그인에 실패했습니다. 다시 시도해 주세요.',
+        err instanceof ApiError && err.code === 'NOT_FOUND'
+          ? '존재하지 않는 아이디입니다.'
+          : err instanceof ApiError && err.code === 'BAD_PASSWORD'
+            ? '비밀번호가 올바르지 않습니다.'
+            : '로그인에 실패했습니다. 다시 시도해 주세요.',
       )
     } finally {
       setSubmitting(false)
@@ -131,90 +121,109 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
 
   async function handleRegister(e: FormEvent) {
     e.preventDefault()
-    if (step.name !== 'register') return
-    if (password.length < 8) {
-      setFormError('비밀번호는 8자 이상이어야 합니다.')
+    if (nameStatus !== 'available') {
+      setFormError('아이디 중복확인을 먼저 진행해 주세요.')
+      return
+    }
+    if (!isValidPassword(password)) {
+      window.alert(`비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다.`)
+      setFormError(`비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다.`)
       return
     }
     if (password !== confirmPassword) {
       setFormError('비밀번호가 일치하지 않습니다.')
       return
     }
+    if (!link) {
+      setFormError('Blizzard 계정 연동을 먼저 완료해 주세요.')
+      return
+    }
     setSubmitting(true)
     setFormError(null)
     try {
-      const user = await apiRegister(step.battletag, password)
+      const user = await apiRegister(username, password, link.state)
       onAuthenticated(user)
     } catch (err) {
       setFormError(
-        err instanceof ApiError && err.code === 'ALREADY_REGISTERED'
-          ? '이미 가입된 배틀태그입니다.'
-          : err instanceof ApiError && err.code === 'NOT_FOUND'
-            ? '계정을 찾을 수 없습니다. 배틀태그를 확인해주세요. 프로필 비공개 시 검색이 되지 않습니다.'
-            : '가입에 실패했습니다. 다시 시도해 주세요.',
+        err instanceof ApiError && err.code === 'USERNAME_TAKEN'
+          ? '이미 사용 중인 아이디입니다.'
+          : err instanceof ApiError && err.code === 'BATTLETAG_TAKEN'
+            ? '이미 다른 계정에 연동된 배틀태그입니다.'
+            : err instanceof ApiError &&
+                (err.code === 'LINK_EXPIRED' || err.code === 'LINK_REQUIRED')
+              ? 'Blizzard 연동이 만료되었습니다. 다시 연동해 주세요.'
+              : err instanceof ApiError && err.code === 'WEAK_PASSWORD'
+                ? `비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다.`
+                : '가입에 실패했습니다. 다시 시도해 주세요.',
       )
+      if (err instanceof ApiError && (err.code === 'LINK_EXPIRED' || err.code === 'LINK_REQUIRED')) {
+        setLink(null)
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
+  const passwordValid = isValidPassword(password)
+  const canRegister =
+    nameStatus === 'available' &&
+    passwordValid &&
+    password === confirmPassword &&
+    link !== null
+
   return (
     <div className="auth-card">
       <div className="auth-card__glow" aria-hidden />
 
-      {step.name === 'input' && (
-        <form className="auth-step" onSubmit={handleNext}>
-          <h2 className="auth-title">Connect Your BattleTag</h2>
-          <p className="auth-subtitle">
-            배틀태그로 계정을 확인합니다. 등록된 유저는 로그인, 처음이라면
-            티어 인증 후 가입이 진행됩니다.
-          </p>
+      <div className="auth-tabs" role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'login'}
+          className={`auth-tab${mode === 'login' ? ' auth-tab--active' : ''}`}
+          onClick={() => switchMode('login')}
+        >
+          로그인
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === 'signup'}
+          className={`auth-tab${mode === 'signup' ? ' auth-tab--active' : ''}`}
+          onClick={() => switchMode('signup')}
+        >
+          회원가입
+        </button>
+      </div>
+
+      {mode === 'login' ? (
+        <form className="auth-step" onSubmit={handleLogin}>
+          <h2 className="auth-title">Welcome Back</h2>
+          <p className="auth-subtitle">아이디와 비밀번호로 로그인하세요.</p>
 
           <label className="field">
-            <span className="field__label">BattleTag</span>
+            <span className="field__label">아이디</span>
             <input
               className="field__input"
               type="text"
-              value={battletag}
-              onChange={(e) => setBattletag(e.target.value)}
-              placeholder="Enter your BattleTag (e.g., Tracer#1234)"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="아이디"
+              autoComplete="username"
               autoFocus
               spellCheck={false}
             />
           </label>
 
-          {inputError && <p className="form-error">{inputError}</p>}
-
-          <button className="btn btn--primary btn--big" type="submit">
-            Next
-          </button>
-        </form>
-      )}
-
-      {step.name === 'searching' && (
-        <div className="auth-step auth-step--center">
-          <div className="spinner" role="status" aria-label="loading" />
-          <p className="searching-text">
-            Searching BattleTag in Blizzard Database...
-          </p>
-          <p className="searching-sub">{battletag.trim()}</p>
-        </div>
-      )}
-
-      {step.name === 'login' && (
-        <form className="auth-step" onSubmit={handleLogin}>
-          <h2 className="auth-title">Welcome back, {step.battletag}!</h2>
-          <p className="auth-subtitle">Enter your password to log in.</p>
-
-          <label className="field slide-in">
-            <span className="field__label">Password</span>
+          <label className="field">
+            <span className="field__label">비밀번호</span>
             <input
               className="field__input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
-              autoFocus
+              autoComplete="current-password"
             />
           </label>
 
@@ -223,131 +232,142 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
           <button
             className="btn btn--primary btn--big"
             type="submit"
-            disabled={submitting || password.length === 0}
+            disabled={submitting || username.length === 0 || password.length === 0}
           >
-            {submitting ? 'Logging in...' : 'Log In'}
-          </button>
-          <button type="button" className="btn btn--ghost" onClick={resetToInput}>
-            Back
+            {submitting ? '로그인 중...' : '로그인'}
           </button>
         </form>
-      )}
-
-      {step.name === 'register' && (
+      ) : (
         <form className="auth-step" onSubmit={handleRegister}>
-          <div className="verify-badge">
-            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" aria-hidden>
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8" />
-              <path
-                d="m7.5 12.2 3 3 6-6.5"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-
-          <h2 className="auth-title auth-title--green">Profile Verified!</h2>
+          <h2 className="auth-title">Create Account</h2>
           <p className="auth-subtitle">
-            We fetched your rank:{' '}
-            <RankBadge
-              rankLabel={step.rankLabel}
-              rankIcon={step.rankIcon}
-              roleLabel={step.roleLabel}
-              mostHeroes={step.mostHeroes}
-            />
+            원하는 아이디로 가입한 뒤, Blizzard 계정을 연동해 배틀태그와 전적을 인증하세요.
           </p>
 
-          <div className="player-chip">
-            {step.avatar && (
-              <img className="player-chip__avatar" src={step.avatar} alt="" />
-            )}
-            <div>
-              <div className="player-chip__tag">{step.battletag}</div>
-              <div className="player-chip__meta">
-                {step.title ?? 'Overwatch 2 Player'}
-              </div>
+          <label className="field">
+            <span className="field__label">아이디</span>
+            <div className="field__row">
+              <input
+                className="field__input"
+                type="text"
+                value={username}
+                onChange={(e) => handleUsernameChange(e.target.value)}
+                placeholder="3~16자 (한글/영문/숫자/_)"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="btn btn--ghost btn--check"
+                onClick={handleCheckUsername}
+                disabled={checking || username.trim().length === 0}
+              >
+                {checking ? '확인 중...' : '중복확인'}
+              </button>
             </div>
-          </div>
+            {nameStatus === 'available' && (
+              <span className="field__hint field__hint--ok">사용 가능한 아이디입니다.</span>
+            )}
+            {nameStatus === 'taken' && (
+              <span className="field__hint field__hint--err">이미 사용 중인 아이디입니다.</span>
+            )}
+            {nameStatus === 'invalid' && (
+              <span className="field__hint field__hint--err">
+                아이디는 3~16자의 한글/영문/숫자/_ 만 사용할 수 있습니다.
+              </span>
+            )}
+          </label>
 
-          <label className="field slide-in">
-            <span className="field__label">Choose Password</span>
+          <label className="field">
+            <span className="field__label">비밀번호</span>
             <input
               className="field__input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="8자 이상"
-              autoFocus
+              placeholder={`최소 ${MIN_PASSWORD_LENGTH}자 이상`}
+              autoComplete="new-password"
             />
+            <span
+              className={`field__hint${
+                password.length === 0 ? '' : passwordValid ? ' field__hint--ok' : ' field__hint--err'
+              }`}
+            >
+              비밀번호는 최소 {MIN_PASSWORD_LENGTH}자 이상이어야 합니다.
+            </span>
           </label>
-          <label className="field slide-in">
-            <span className="field__label">Confirm Password</span>
+
+          <label className="field">
+            <span className="field__label">비밀번호 확인</span>
             <input
               className="field__input"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="비밀번호 확인"
+              autoComplete="new-password"
             />
+            {confirmPassword.length > 0 && password !== confirmPassword && (
+              <span className="field__hint field__hint--err">비밀번호가 일치하지 않습니다.</span>
+            )}
           </label>
+
+          <div className="link-section">
+            {link ? (
+              <div className="link-done">
+                <div className="verify-badge verify-badge--sm">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden>
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8" />
+                    <path
+                      d="m7.5 12.2 3 3 6-6.5"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+                <div className="player-chip">
+                  {link.avatar && <img className="player-chip__avatar" src={link.avatar} alt="" />}
+                  <div>
+                    <div className="player-chip__tag">{link.battletag}</div>
+                    <div className="player-chip__meta">
+                      <RankBadge
+                        rankLabel={link.rankLabel}
+                        rankIcon={link.rankIcon}
+                        roleLabel={link.roleLabel}
+                        mostHeroes={link.mostHeroes}
+                        bracketed={false}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <button type="button" className="btn btn--ghost btn--small" onClick={handleLink}>
+                  다시 연동
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn--blizzard btn--big"
+                onClick={handleLink}
+                disabled={linking}
+              >
+                {linking ? 'Blizzard 인증 대기 중...' : 'Blizzard 계정 연동'}
+              </button>
+            )}
+          </div>
 
           {formError && <p className="form-error">{formError}</p>}
 
           <button
             className="btn btn--primary btn--big"
             type="submit"
-            disabled={submitting}
+            disabled={submitting || !canRegister}
           >
-            {submitting ? 'Creating...' : 'Create Account & Start'}
-          </button>
-          <button type="button" className="btn btn--ghost" onClick={resetToInput}>
-            Back
+            {submitting ? '가입 중...' : '가입하고 시작하기'}
           </button>
         </form>
-      )}
-
-      {step.name === 'notFound' && (
-        <div className="auth-step auth-step--center">
-          <div className="alert-icon" aria-hidden>
-            <svg viewBox="0 0 24 24" width="44" height="44" fill="none">
-              <path
-                d="M12 3 2.5 20h19L12 3z"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinejoin="round"
-              />
-              <path d="M12 9.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-              <circle cx="12" cy="17.2" r="1" fill="currentColor" />
-            </svg>
-          </div>
-
-          <p className="auth-subtitle not-found-message">
-            계정을 찾을 수 없습니다. 배틀태그를 확인해주세요. 프로필 비공개 시
-            검색이 되지 않습니다.
-          </p>
-
-          <button className="btn btn--primary btn--big" onClick={resetToInput}>
-            다시 시도
-          </button>
-        </div>
-      )}
-
-      {step.name === 'error' && (
-        <div className="auth-step auth-step--center">
-          <h2 className="auth-title auth-title--amber">Connection Error</h2>
-          <p className="auth-subtitle">{step.message}</p>
-          <button
-            className="btn btn--primary btn--big"
-            onClick={() => void runSearch(battletag.trim())}
-          >
-            Retry
-          </button>
-          <button className="btn btn--ghost" onClick={resetToInput}>
-            Back
-          </button>
-        </div>
       )}
     </div>
   )

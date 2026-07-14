@@ -5,8 +5,9 @@
 const TOKEN_KEY = 'opmunchul.token'
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
+export const MIN_PASSWORD_LENGTH = 8
+
 function apiUrl(path: string): string {
-  // path like "/auth/check" or full "/api/auth/me"
   const p = path.startsWith('/api') ? path : `/api${path}`
   return `${API_BASE}${p}`
 }
@@ -20,6 +21,7 @@ export interface MostHero {
 }
 
 export interface AuthUser {
+  username: string
   battletag: string
   rankLabel: string
   rankIcon: string | null
@@ -31,19 +33,18 @@ export interface AuthUser {
   rankFetchedAt?: number | null
 }
 
-export type CheckResult =
-  | { status: 'registered'; battletag: string }
-  | {
-      status: 'new'
-      battletag: string
-      rankLabel: string
-      rankIcon: string | null
-      rankRole: string | null
-      roleLabel: string | null
-      mostHeroes: MostHero[]
-      avatar: string | null
-      title: string | null
-    }
+/** Result of a completed Blizzard OAuth link, ready to feed into register(). */
+export interface BlizzardLink {
+  state: string
+  battletag: string
+  rankLabel: string
+  rankIcon: string | null
+  rankRole: string | null
+  roleLabel: string | null
+  mostHeroes: MostHero[]
+  avatar: string | null
+  title: string | null
+}
 
 export class ApiError extends Error {
   code: string
@@ -56,8 +57,13 @@ export class ApiError extends Error {
   }
 }
 
-export function isValidBattleTag(battletag: string): boolean {
-  return /^[^#\s]{2,12}#\d{4,7}$/.test(battletag.trim())
+const USERNAME_RE = /^[A-Za-z0-9가-힣_]{3,16}$/
+export function isValidUsername(username: string): boolean {
+  return USERNAME_RE.test(username.trim())
+}
+
+export function isValidPassword(password: string): boolean {
+  return password.length >= MIN_PASSWORD_LENGTH
 }
 
 export function getToken(): string | null {
@@ -70,15 +76,6 @@ function setToken(token: string) {
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY)
-}
-
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(apiUrl(path), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return handle<T>(res)
 }
 
 async function handle<T>(res: Response): Promise<T> {
@@ -95,30 +92,120 @@ async function handle<T>(res: Response): Promise<T> {
   return data as T
 }
 
-export function checkBattleTag(battletag: string): Promise<CheckResult> {
-  return post<CheckResult>('/auth/check', { battletag })
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return handle<T>(res)
+}
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(apiUrl(path))
+  return handle<T>(res)
+}
+
+export function checkUsername(username: string): Promise<{ available: boolean; username: string }> {
+  return post('/auth/check-username', { username })
+}
+
+type PollResult =
+  | { status: 'pending' }
+  | { status: 'expired' }
+  | { status: 'unknown' }
+  | { status: 'error'; message?: string }
+  | ({ status: 'linked'; battletag: string } & Omit<BlizzardLink, 'state' | 'battletag'>)
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Kick off a Blizzard OAuth link in a popup and resolve once the account is
+ * linked. Polls the server so it works across origins (dev proxy included).
+ */
+export async function linkBlizzard(): Promise<BlizzardLink> {
+  const { state, authorizeUrl } = await get<{ state: string; authorizeUrl: string }>(
+    '/auth/blizzard/start',
+  )
+
+  const popup = window.open(
+    authorizeUrl,
+    'blizzard-oauth',
+    'width=520,height=720,menubar=no,toolbar=no',
+  )
+  if (!popup) {
+    throw new ApiError(0, 'POPUP_BLOCKED')
+  }
+
+  const deadline = Date.now() + 1000 * 60 * 10
+  let popupClosedAt: number | null = null
+
+  while (Date.now() < deadline) {
+    await delay(1500)
+
+    let result: PollResult
+    try {
+      result = await get<PollResult>(`/auth/blizzard/poll?state=${encodeURIComponent(state)}`)
+    } catch {
+      continue
+    }
+
+    if (result.status === 'linked') {
+      popup.close()
+      return {
+        state,
+        battletag: result.battletag,
+        rankLabel: result.rankLabel,
+        rankIcon: result.rankIcon,
+        rankRole: result.rankRole,
+        roleLabel: result.roleLabel,
+        mostHeroes: result.mostHeroes ?? [],
+        avatar: result.avatar,
+        title: result.title,
+      }
+    }
+    if (result.status === 'error') {
+      popup.close()
+      throw new ApiError(502, 'LINK_FAILED', result.message)
+    }
+    if (result.status === 'expired' || result.status === 'unknown') {
+      popup.close()
+      throw new ApiError(400, 'LINK_EXPIRED')
+    }
+
+    // Still pending — if the user closed the popup without finishing, give up.
+    if (popup.closed) {
+      if (popupClosedAt === null) {
+        popupClosedAt = Date.now()
+      } else if (Date.now() - popupClosedAt > 2500) {
+        throw new ApiError(0, 'LINK_CANCELLED')
+      }
+    }
+  }
+
+  popup.close()
+  throw new ApiError(408, 'LINK_TIMEOUT')
 }
 
 export async function register(
-  battletag: string,
+  username: string,
   password: string,
+  state: string,
 ): Promise<AuthUser> {
-  const { token, user } = await post<{ token: string; user: AuthUser }>(
-    '/auth/register',
-    { battletag, password },
-  )
+  const { token, user } = await post<{ token: string; user: AuthUser }>('/auth/register', {
+    username,
+    password,
+    state,
+  })
   setToken(token)
   return user
 }
 
-export async function login(
-  battletag: string,
-  password: string,
-): Promise<AuthUser> {
-  const { token, user } = await post<{ token: string; user: AuthUser }>(
-    '/auth/login',
-    { battletag, password },
-  )
+export async function login(username: string, password: string): Promise<AuthUser> {
+  const { token, user } = await post<{ token: string; user: AuthUser }>('/auth/login', {
+    username,
+    password,
+  })
   setToken(token)
   return user
 }
