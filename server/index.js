@@ -2,6 +2,9 @@ import express from 'express'
 import cors from 'cors'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import db from './db.js'
 import {
   buildRankProfile,
@@ -10,11 +13,18 @@ import {
   PlayerNotFoundError,
 } from './overfast.js'
 
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
 const HOST = process.env.HOST || '0.0.0.0'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
 const BCRYPT_ROUNDS = 10
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || true
+// Built Vite assets (Docker copies dist → server/public)
+const PUBLIC_DIR =
+  process.env.PUBLIC_DIR ||
+  [join(__dirname, 'public'), join(__dirname, '..', 'dist')].find((p) =>
+    existsSync(join(p, 'index.html')),
+  )
 
 const app = express()
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: false }))
@@ -128,13 +138,6 @@ async function ensureDailyRank(user) {
   )
   return findUser.get(user.battletag_key)
 }
-
-app.get('/', (_req, res) => {
-  res.status(200).json({ ok: true, service: 'opmunchul-board-api' })
-})
-app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true })
-})
 
 app.post('/api/auth/check', async (req, res) => {
   const battletag = String(req.body?.battletag ?? '').trim()
@@ -256,6 +259,28 @@ app.post('/api/auth/logout', (req, res) => {
   if (auth) deleteSession.run(auth.token)
   return res.json({ ok: true })
 })
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true })
+})
+
+// Serve the React SPA when a production build is present.
+if (PUBLIC_DIR) {
+  console.log('Serving frontend from', PUBLIC_DIR)
+  app.use(express.static(PUBLIC_DIR))
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next()
+    res.sendFile(join(PUBLIC_DIR, 'index.html'))
+  })
+} else {
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: 'opmunchul-board-api',
+      hint: 'Frontend build not found. Deploy from repo root so Vite dist is included.',
+    })
+  })
+}
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`옵문철 게시판 auth server listening on http://${HOST}:${PORT}`)
