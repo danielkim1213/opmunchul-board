@@ -28,6 +28,7 @@ export default function VodMeta({ vod }: { vod: VodInfo }) {
               rankLabel={vod.submitter.rankLabel}
               rankIcon={vod.submitter.rankIcon}
               roleLabel={vod.submitter.roleLabel}
+              mostHeroes={vod.submitter.mostHeroes}
             />
           </span>
         </div>

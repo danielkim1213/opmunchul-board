@@ -12,7 +12,7 @@ const insertComment = db.prepare(`
 `)
 const findComment = db.prepare('SELECT * FROM vod_comments WHERE id = ?')
 const listComments = db.prepare(`
-  SELECT c.*, u.username, u.battletag, u.rank_label, u.rank_icon, u.rank_role
+  SELECT c.*, u.username, u.battletag, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM vod_comments c
   JOIN users u ON u.username_key = c.username_key
   WHERE c.vod_id = ?
@@ -39,6 +39,16 @@ function roleLabelOf(rankRole) {
         : null
 }
 
+function parseMostHeroes(raw) {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 function toPublicVod(row) {
   return {
     id: row.id,
@@ -52,6 +62,7 @@ function toPublicVod(row) {
       rankLabel: row.submitter_rank_label,
       rankIcon: row.submitter_rank_icon,
       roleLabel: row.submitter_role_label,
+      mostHeroes: parseMostHeroes(row.submitter_most_heroes),
     },
     createdAt: row.created_at,
   }
@@ -70,6 +81,7 @@ function toPublicComment(row, viewerKey) {
       rankLabel: row.rank_label,
       rankIcon: row.rank_icon,
       roleLabel: roleLabelOf(row.rank_role),
+      mostHeroes: parseMostHeroes(row.most_heroes),
     },
     upvotes: countUpvotes.get(row.id).n,
     upvotedByMe: viewerKey ? Boolean(hasUpvoted.get(row.id, viewerKey)) : false,
@@ -116,15 +128,22 @@ export function registerVodRoutes(app, { authenticate }) {
     if (!vod) return res.status(404).json({ error: 'NOT_FOUND' })
 
     const content = String(req.body?.content ?? '').trim()
-    const timestampSeconds = Math.round(Number(req.body?.timestampSeconds))
     const parentId = req.body?.parentId ? String(req.body.parentId) : null
+
+    // Omitted/null timestamp = "global" feedback that isn't tied to a moment.
+    const rawTimestamp = req.body?.timestampSeconds
+    const isGlobal = rawTimestamp === null || rawTimestamp === undefined || rawTimestamp === ''
+    let timestampSeconds = null
+    if (!isGlobal) {
+      timestampSeconds = Math.round(Number(rawTimestamp))
+      if (!Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
+        return res.status(400).json({ error: 'INVALID_TIMESTAMP' })
+      }
+    }
 
     if (!content) return res.status(400).json({ error: 'EMPTY_CONTENT' })
     if (content.length > MAX_COMMENT_LENGTH) {
       return res.status(400).json({ error: 'CONTENT_TOO_LONG' })
-    }
-    if (!Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
-      return res.status(400).json({ error: 'INVALID_TIMESTAMP' })
     }
 
     if (parentId) {
@@ -157,6 +176,7 @@ export function registerVodRoutes(app, { authenticate }) {
       rank_label: auth.user.rank_label,
       rank_icon: auth.user.rank_icon,
       rank_role: auth.user.rank_role,
+      most_heroes: auth.user.most_heroes,
     }
     return res.status(201).json({
       comment: { ...toPublicComment(withAuthor, auth.user.username_key), replies: [] },

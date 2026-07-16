@@ -1,5 +1,6 @@
 // VOD review API client — mirrors the conventions in api/auth.ts.
 import { ApiError, getToken } from './auth'
+import type { MostHero } from './auth'
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 
@@ -15,6 +16,7 @@ export interface VodSubmitter {
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
+  mostHeroes: MostHero[]
 }
 
 export interface VodInfo {
@@ -34,12 +36,14 @@ export interface VodCommentAuthor {
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
+  mostHeroes: MostHero[]
 }
 
 export interface VodComment {
   id: string
   parentId: string | null
-  timestampSeconds: number
+  /** null = "global" feedback that isn't tied to a specific moment. */
+  timestampSeconds: number | null
   content: string
   createdAt: number
   author: VodCommentAuthor
@@ -80,7 +84,7 @@ export async function fetchVodComments(): Promise<VodComment[]> {
 }
 
 export async function addVodComment(input: {
-  timestampSeconds: number
+  timestampSeconds: number | null
   content: string
   parentId?: string | null
 }): Promise<VodComment> {

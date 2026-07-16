@@ -15,6 +15,8 @@ interface YTNamespace {
     el: HTMLElement,
     options: {
       videoId: string
+      width?: string | number
+      height?: string | number
       playerVars?: Record<string, unknown>
       events?: {
         onReady?: () => void
@@ -88,9 +90,15 @@ const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>(functi
     loadYouTubeApi().then((YT) => {
       if (cancelled || !containerRef.current) return
 
+      // The IFrame API replaces `containerRef.current` outright with the
+      // <iframe>, so `.yt-player__frame` no longer exists afterwards — sizing
+      // has to be forced via CSS on the resulting iframe (see VodReview.css),
+      // not on this now-gone wrapper div.
       playerRef.current = new YT.Player(containerRef.current, {
         videoId,
-        playerVars: { rel: 0, modestbranding: 1 },
+        width: '100%',
+        height: '100%',
+        playerVars: { rel: 0, modestbranding: 1, playsinline: 1 },
         events: {
           onReady: () => onReady?.(),
           onStateChange: (event) => {

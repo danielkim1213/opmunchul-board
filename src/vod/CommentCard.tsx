@@ -2,6 +2,8 @@ import type { VodComment } from '../api/vod'
 import RankBadge from '../components/RankBadge'
 import { formatTimestamp } from './time'
 
+const HIGHLIGHT_WINDOW_SECONDS = 5
+
 interface CommentCardProps {
   comment: VodComment
   isActive: boolean
@@ -33,6 +35,8 @@ export default function CommentCard({
   replySubmitting,
   registerRef,
 }: CommentCardProps) {
+  const isGlobal = comment.timestampSeconds === null
+
   return (
     <li
       ref={registerRef}
@@ -46,15 +50,20 @@ export default function CommentCard({
           rankLabel={comment.author.rankLabel}
           rankIcon={comment.author.rankIcon}
           roleLabel={comment.author.roleLabel}
+          mostHeroes={comment.author.mostHeroes}
         />
-        <button
-          type="button"
-          className="timestamp-badge"
-          onClick={() => onSeek(comment.timestampSeconds)}
-          title="이 시점으로 영상 이동"
-        >
-          [{formatTimestamp(comment.timestampSeconds)}]
-        </button>
+        {isGlobal ? (
+          <span className="global-badge">🗒 전체 피드백</span>
+        ) : (
+          <button
+            type="button"
+            className="timestamp-badge"
+            onClick={() => onSeek(comment.timestampSeconds as number)}
+            title="이 시점으로 영상 이동"
+          >
+            [{formatTimestamp(comment.timestampSeconds as number)}]
+          </button>
+        )}
       </div>
 
       <p className="comment-card__content">{comment.content}</p>
@@ -104,7 +113,10 @@ export default function CommentCard({
             <CommentCard
               key={reply.id}
               comment={reply}
-              isActive={Math.abs(reply.timestampSeconds - currentTime) <= 5}
+              isActive={
+                reply.timestampSeconds !== null &&
+                Math.abs(reply.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
+              }
               currentTime={currentTime}
               isReply
               onSeek={onSeek}

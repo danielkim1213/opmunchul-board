@@ -21,6 +21,10 @@ const COMMENT_MAX = 500
 
 type SortMode = 'timestamp' | 'likes'
 
+function hasTimestamp(c: VodComment): c is VodComment & { timestampSeconds: number } {
+  return c.timestampSeconds !== null
+}
+
 export default function VodReview() {
   const [vod, setVod] = useState<VodInfo | null>(null)
   const [comments, setComments] = useState<VodComment[]>([])
@@ -31,6 +35,7 @@ export default function VodReview() {
 
   const [timestampInput, setTimestampInput] = useState('0:00')
   const [timestampTouched, setTimestampTouched] = useState(false)
+  const [isGlobalFeedback, setIsGlobalFeedback] = useState(false)
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -79,6 +84,7 @@ export default function VodReview() {
   function handleUseCurrentTime() {
     setTimestampInput(formatTimestamp(currentTime))
     setTimestampTouched(false)
+    setIsGlobalFeedback(false)
     contentRef.current?.focus()
   }
 
@@ -90,11 +96,15 @@ export default function VodReview() {
     e.preventDefault()
     setFormError(null)
 
-    const seconds = parseTimestamp(timestampInput)
-    if (seconds === null) {
-      setFormError('타임스탬프 형식이 올바르지 않습니다. 예: 1:23')
-      return
+    let seconds: number | null = null
+    if (!isGlobalFeedback) {
+      seconds = parseTimestamp(timestampInput)
+      if (seconds === null) {
+        setFormError('타임스탬프 형식이 올바르지 않습니다. 예: 1:23')
+        return
+      }
     }
+
     const trimmed = content.trim()
     if (!trimmed) {
       setFormError('피드백 내용을 입력해 주세요.')
@@ -111,6 +121,7 @@ export default function VodReview() {
       setComments((prev) => [...prev, comment])
       setContent('')
       setTimestampTouched(false)
+      setIsGlobalFeedback(false)
     } catch (err) {
       setFormError(
         err instanceof ApiError && err.code === 'UNAUTHENTICATED'
@@ -138,11 +149,10 @@ export default function VodReview() {
     setReplySubmitting(true)
     try {
       const parent = findComment(comments, parentId)
-      const comment = await addVodComment({
-        timestampSeconds: parent?.timestampSeconds ?? Math.round(currentTime),
-        content: trimmed,
-        parentId,
-      })
+      // A reply always shares its parent's timestamp (or lack thereof) — a
+      // reply to "global" feedback is itself global, not snapped to "now".
+      const timestampSeconds = parent ? parent.timestampSeconds : Math.round(currentTime)
+      const comment = await addVodComment({ timestampSeconds, content: trimmed, parentId })
       setComments((prev) => addReply(prev, parentId, comment))
       setReplyContent('')
       setReplyTarget(null)
@@ -165,20 +175,39 @@ export default function VodReview() {
     setVideoInputError(false)
   }
 
-  const sortedComments = useMemo(() => {
-    const copy = [...comments]
+  const globalComments = useMemo(() => comments.filter((c) => c.timestampSeconds === null), [comments])
+  const timelineComments = useMemo(() => comments.filter(hasTimestamp), [comments])
+
+  const sortedGlobalComments = useMemo(() => {
+    const copy = [...globalComments]
+    copy.sort((a, b) => (sortMode === 'likes' ? b.upvotes - a.upvotes : a.createdAt - b.createdAt))
+    return copy
+  }, [globalComments, sortMode])
+
+  const sortedTimelineComments = useMemo(() => {
+    const copy = [...timelineComments]
     if (sortMode === 'likes') {
       copy.sort((a, b) => b.upvotes - a.upvotes || a.timestampSeconds - b.timestampSeconds)
     } else {
       copy.sort((a, b) => a.timestampSeconds - b.timestampSeconds)
     }
     return copy
-  }, [comments, sortMode])
+  }, [timelineComments, sortMode])
+
+  // In sync mode, only timestamped comments near the current playback
+  // position are shown — global feedback always stays visible regardless,
+  // since it isn't tied to any particular moment.
+  const visibleTimelineComments = useMemo(() => {
+    if (!syncMode) return sortedTimelineComments
+    return sortedTimelineComments.filter(
+      (c) => Math.abs(c.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS,
+    )
+  }, [sortedTimelineComments, syncMode, currentTime])
 
   const activeCommentId = useMemo(() => {
     let best: VodComment | null = null
     let bestDelta = Infinity
-    for (const c of comments) {
+    for (const c of timelineComments) {
       const delta = Math.abs(c.timestampSeconds - currentTime)
       if (delta <= HIGHLIGHT_WINDOW_SECONDS && delta < bestDelta) {
         best = c
@@ -186,7 +215,7 @@ export default function VodReview() {
       }
     }
     return best?.id ?? null
-  }, [comments, currentTime])
+  }, [timelineComments, currentTime])
 
   useEffect(() => {
     if (!syncMode || !activeCommentId || activeCommentId === lastScrolledId.current) return
@@ -198,7 +227,7 @@ export default function VodReview() {
   }, [activeCommentId, syncMode])
 
   function isCommentActive(c: VodComment) {
-    return Math.abs(c.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
+    return c.timestampSeconds !== null && Math.abs(c.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
   }
 
   if (loading) {
@@ -256,13 +285,14 @@ export default function VodReview() {
                 id="vod-ts-input"
                 className="feedback-form__timestamp"
                 value={timestampInput}
+                disabled={isGlobalFeedback}
                 onChange={(e) => {
                   setTimestampInput(e.target.value)
                   setTimestampTouched(true)
                 }}
                 placeholder="1:23"
               />
-              {timestampTouched && (
+              {timestampTouched && !isGlobalFeedback && (
                 <button
                   type="button"
                   className="btn btn--ghost btn--small"
@@ -273,12 +303,25 @@ export default function VodReview() {
               )}
             </div>
 
+            <label className="feedback-form__global-toggle">
+              <input
+                type="checkbox"
+                checked={isGlobalFeedback}
+                onChange={(e) => setIsGlobalFeedback(e.target.checked)}
+              />
+              특정 시간대 없이 전체적인 피드백 남기기
+            </label>
+
             <textarea
               ref={contentRef}
               value={content}
               onChange={(e) => setContent(e.target.value.slice(0, COMMENT_MAX))}
               maxLength={COMMENT_MAX}
-              placeholder="이 시점에 대한 피드백을 남겨보세요."
+              placeholder={
+                isGlobalFeedback
+                  ? '영상 전체에 대한 종합적인 피드백을 남겨보세요.'
+                  : '이 시점에 대한 피드백을 남겨보세요.'
+              }
               rows={3}
             />
 
@@ -317,42 +360,87 @@ export default function VodReview() {
                 type="button"
                 className={`chip${syncMode ? ' chip--active' : ''}`}
                 onClick={() => setSyncMode((v) => !v)}
-                title="영상 재생 위치에 맞춰 자동으로 스크롤합니다"
+                title="현재 재생 위치와 가까운(±5초) 피드백만 보여줍니다"
               >
                 🔄 싱크 모드
               </button>
             </div>
           </div>
 
-          {sortedComments.length === 0 && (
+          {comments.length === 0 && (
             <p className="comment-feed__empty">아직 피드백이 없습니다. 첫 피드백을 남겨보세요!</p>
           )}
 
-          <ul className="comment-feed__list">
-            {sortedComments.map((c) => (
-              <CommentCard
-                key={c.id}
-                comment={c}
-                isActive={isCommentActive(c)}
-                currentTime={currentTime}
-                onSeek={handleSeek}
-                onUpvote={handleUpvote}
-                replyOpen={replyTarget === c.id}
-                replyContent={replyTarget === c.id ? replyContent : ''}
-                onReplyToggle={(id) => {
-                  setReplyTarget(id)
-                  setReplyContent('')
-                }}
-                onReplyChange={setReplyContent}
-                onReplySubmit={() => handleReplySubmit(c.id)}
-                replySubmitting={replySubmitting}
-                registerRef={(el) => {
-                  if (el) commentRefs.current.set(c.id, el)
-                  else commentRefs.current.delete(c.id)
-                }}
-              />
-            ))}
-          </ul>
+          {sortedGlobalComments.length > 0 && (
+            <div className="comment-feed__section">
+              <p className="comment-feed__section-title">🗒 전체 피드백 ({sortedGlobalComments.length})</p>
+              <ul className="comment-feed__list">
+                {sortedGlobalComments.map((c) => (
+                  <CommentCard
+                    key={c.id}
+                    comment={c}
+                    isActive={false}
+                    currentTime={currentTime}
+                    onSeek={handleSeek}
+                    onUpvote={handleUpvote}
+                    replyOpen={replyTarget === c.id}
+                    replyContent={replyTarget === c.id ? replyContent : ''}
+                    onReplyToggle={(id) => {
+                      setReplyTarget(id)
+                      setReplyContent('')
+                    }}
+                    onReplyChange={setReplyContent}
+                    onReplySubmit={() => handleReplySubmit(c.id)}
+                    replySubmitting={replySubmitting}
+                    registerRef={(el) => {
+                      if (el) commentRefs.current.set(c.id, el)
+                      else commentRefs.current.delete(c.id)
+                    }}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {timelineComments.length > 0 && (
+            <div className="comment-feed__section">
+              <p className="comment-feed__section-title">
+                ⏱ 타임라인 피드백 ({visibleTimelineComments.length}/{timelineComments.length})
+              </p>
+
+              {syncMode && visibleTimelineComments.length === 0 && (
+                <p className="comment-feed__sync-note">
+                  현재 재생 위치(±5초) 근처에 피드백이 없습니다.
+                </p>
+              )}
+
+              <ul className="comment-feed__list">
+                {visibleTimelineComments.map((c) => (
+                  <CommentCard
+                    key={c.id}
+                    comment={c}
+                    isActive={isCommentActive(c)}
+                    currentTime={currentTime}
+                    onSeek={handleSeek}
+                    onUpvote={handleUpvote}
+                    replyOpen={replyTarget === c.id}
+                    replyContent={replyTarget === c.id ? replyContent : ''}
+                    onReplyToggle={(id) => {
+                      setReplyTarget(id)
+                      setReplyContent('')
+                    }}
+                    onReplyChange={setReplyContent}
+                    onReplySubmit={() => handleReplySubmit(c.id)}
+                    replySubmitting={replySubmitting}
+                    registerRef={(el) => {
+                      if (el) commentRefs.current.set(c.id, el)
+                      else commentRefs.current.delete(c.id)
+                    }}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>

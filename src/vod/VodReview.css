@@ -51,9 +51,21 @@
   inset: 0;
 }
 
-.yt-player__frame iframe {
+/*
+ * The YouTube IFrame API replaces `.yt-player__frame` outright with an
+ * <iframe> (it doesn't nest inside it), so that class is gone by the time
+ * the player mounts. The resulting iframe ends up a direct child of
+ * `.yt-player` instead — target it there and force it to fill the box via
+ * CSS rather than trusting the width/height attributes the API sets, which
+ * default to a fixed 640x390px and get cropped by `overflow: hidden` on
+ * small screens (visible as only the top-left "quarter" of the video).
+ */
+.yt-player iframe {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  border: 0;
 }
 
 .yt-player__error {
@@ -220,6 +232,27 @@
   gap: 8px;
 }
 
+.feedback-form__global-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.feedback-form__global-toggle input {
+  accent-color: var(--orange);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.feedback-form__global-toggle:hover {
+  color: var(--text);
+}
+
 .feedback-form__label {
   font-size: 12px;
   font-weight: 700;
@@ -243,6 +276,11 @@
 
 .feedback-form__timestamp:focus {
   border-color: var(--orange);
+}
+
+.feedback-form__timestamp:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .feedback-form textarea {
@@ -333,6 +371,37 @@
   padding: 24px 0;
 }
 
+.comment-feed__section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-feed__section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  margin: 4px 0 0;
+}
+
+.comment-feed__section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--card-border);
+}
+
+.comment-feed__sync-note {
+  font-size: 12px;
+  color: var(--orange);
+  text-align: center;
+  padding: 4px 0 0;
+}
+
 .comment-feed__list {
   list-style: none;
   margin: 0;
@@ -402,6 +471,18 @@
 .timestamp-badge:hover {
   background: rgba(249, 158, 26, 0.25);
   transform: translateY(-1px);
+}
+
+.global-badge {
+  margin-left: auto;
+  background: rgba(33, 143, 254, 0.12);
+  border: 1px solid rgba(33, 143, 254, 0.5);
+  color: var(--blue);
+  font-weight: 700;
+  font-size: 12px;
+  border-radius: 6px;
+  padding: 3px 9px;
+  white-space: nowrap;
 }
 
 .comment-card__content {
@@ -475,4 +556,58 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* ---------- Mobile ---------- */
+@media (max-width: 640px) {
+  .vod-review {
+    padding: 14px 12px 40px;
+    gap: 14px;
+  }
+
+  .vod-meta {
+    padding: 14px 16px;
+  }
+
+  .feedback-form {
+    padding: 12px;
+  }
+
+  .feedback-form__now-btn {
+    font-size: 13px;
+  }
+
+  .feedback-form__row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .comment-feed__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .comment-feed__controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    flex: 1;
+    text-align: center;
+    padding: 6px 8px;
+  }
+
+  .comment-card__header {
+    gap: 6px;
+  }
+
+  .timestamp-badge,
+  .global-badge {
+    margin-left: 0;
+  }
+
+  .comment-card__tag {
+    flex-basis: 100%;
+  }
 }
