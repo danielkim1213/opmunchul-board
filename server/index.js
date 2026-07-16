@@ -19,7 +19,7 @@ import {
   getSwitchAccountAuthorizeUrl,
   isBlizzardConfigured,
 } from './blizzard.js'
-import { registerVodRoutes } from './vod.js'
+import { registerPostRoutes } from './posts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
@@ -490,9 +490,9 @@ app.post('/api/auth/logout', (req, res) => {
 })
 
 /* ------------------------------------------------------------------ *
- * VOD review + timestamped comments
+ * Board posts (tip / feedback / poll) + comments + votes
  * ------------------------------------------------------------------ */
-registerVodRoutes(app, { authenticate })
+registerPostRoutes(app, { authenticate })
 
 app.get('/health', (_req, res) => {
   res.status(200).json({ ok: true })

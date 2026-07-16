@@ -25,15 +25,12 @@ if (legacy.length > 0 && !legacy.some((c) => c.name === 'username_key')) {
   db.exec('DROP TABLE IF EXISTS users;')
 }
 
-// `timestamp_seconds` used to be required; it's now nullable so a comment can
-// be "global" feedback that isn't tied to a specific moment in the VOD.
-// SQLite can't relax a NOT NULL constraint in place, so rebuild the table.
-const vodCommentsInfo = db.prepare(`PRAGMA table_info(vod_comments)`).all()
-if (vodCommentsInfo.some((c) => c.name === 'timestamp_seconds' && c.notnull === 1)) {
-  console.log('Migrating vod_comments: timestamp_seconds is now nullable (global feedback).')
-  db.exec('DROP TABLE IF EXISTS vod_comment_upvotes;')
-  db.exec('DROP TABLE IF EXISTS vod_comments;')
-}
+// The single-demo-VOD model (vods/vod_comments/vod_comment_upvotes) has been
+// replaced by a general `posts` table (tip/feedback/poll) — drop the old
+// tables outright rather than migrating, since it only ever held demo data.
+db.exec('DROP TABLE IF EXISTS vod_comment_upvotes;')
+db.exec('DROP TABLE IF EXISTS vod_comments;')
+db.exec('DROP TABLE IF EXISTS vods;')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -74,95 +71,71 @@ db.exec(`
     consumed      INTEGER NOT NULL DEFAULT 0
   );
 
-  -- VOD review submissions. Submitter identity is denormalized (rather than a
-  -- users FK) because a submission is a snapshot of the author's rank at the
-  -- time it was posted, and demo VODs aren't necessarily tied to a real login.
-  CREATE TABLE IF NOT EXISTS vods (
-    id                    TEXT PRIMARY KEY,
-    replay_code           TEXT NOT NULL,
-    youtube_id            TEXT NOT NULL,
-    hero                  TEXT NOT NULL,
-    team_side             TEXT NOT NULL,
-    note                  TEXT NOT NULL,
-    submitter_battletag   TEXT NOT NULL,
-    submitter_rank_label  TEXT NOT NULL,
-    submitter_rank_icon   TEXT,
-    submitter_role_label  TEXT,
-    submitter_most_heroes TEXT,
-    created_at            INTEGER NOT NULL
+  -- Board posts: type is 'tip' | 'feedback' | 'poll'. Author info is looked
+  -- up live via JOIN on users (like comments), so badges always reflect the
+  -- author's current rank rather than a snapshot.
+  -- allowed_tiers is a JSON array of tier keys (see server/tiers.js) that
+  -- gates comment/upvote/reply/vote participation; NULL/empty = unrestricted.
+  -- replay_code/youtube_id/hero/team_side are only used by 'feedback' posts;
+  -- body is the tip's body text or the feedback request note.
+  CREATE TABLE IF NOT EXISTS posts (
+    id                  TEXT PRIMARY KEY,
+    type                TEXT NOT NULL,
+    title               TEXT NOT NULL,
+    body                TEXT,
+    author_username_key TEXT NOT NULL,
+    allowed_tiers       TEXT,
+    replay_code         TEXT,
+    youtube_id          TEXT,
+    hero                TEXT,
+    team_side           TEXT,
+    created_at          INTEGER NOT NULL,
+    FOREIGN KEY (author_username_key) REFERENCES users(username_key)
   );
 
-  -- Timestamped feedback comments on a VOD. parent_id supports a single
-  -- level of replies (a reply's parent is always a top-level comment).
-  -- timestamp_seconds is NULL for "global" feedback that isn't tied to any
-  -- specific moment in the video.
-  CREATE TABLE IF NOT EXISTS vod_comments (
+  -- Comments on 'tip' and 'feedback' posts. parent_id supports a single
+  -- level of replies. timestamp_seconds is only meaningful for 'feedback'
+  -- posts (NULL there means "global" feedback not tied to a moment); it's
+  -- always NULL for 'tip' comments.
+  CREATE TABLE IF NOT EXISTS post_comments (
     id                TEXT PRIMARY KEY,
-    vod_id            TEXT NOT NULL,
+    post_id           TEXT NOT NULL,
     parent_id         TEXT,
     username_key      TEXT NOT NULL,
     timestamp_seconds INTEGER,
     content           TEXT NOT NULL,
     created_at        INTEGER NOT NULL,
-    FOREIGN KEY (vod_id) REFERENCES vods(id) ON DELETE CASCADE,
-    FOREIGN KEY (parent_id) REFERENCES vod_comments(id) ON DELETE CASCADE,
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES post_comments(id) ON DELETE CASCADE,
     FOREIGN KEY (username_key) REFERENCES users(username_key)
   );
 
-  CREATE TABLE IF NOT EXISTS vod_comment_upvotes (
+  CREATE TABLE IF NOT EXISTS post_comment_upvotes (
     comment_id   TEXT NOT NULL,
     username_key TEXT NOT NULL,
     PRIMARY KEY (comment_id, username_key),
-    FOREIGN KEY (comment_id) REFERENCES vod_comments(id) ON DELETE CASCADE
+    FOREIGN KEY (comment_id) REFERENCES post_comments(id) ON DELETE CASCADE
+  );
+
+  -- 'poll' post options and single-choice votes (one row per voter per poll;
+  -- re-voting UPDATEs the existing row rather than inserting a new one).
+  CREATE TABLE IF NOT EXISTS post_poll_options (
+    id          TEXT PRIMARY KEY,
+    post_id     TEXT NOT NULL,
+    label       TEXT NOT NULL,
+    order_index INTEGER NOT NULL,
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS post_poll_votes (
+    post_id      TEXT NOT NULL,
+    option_id    TEXT NOT NULL,
+    username_key TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    PRIMARY KEY (post_id, username_key),
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+    FOREIGN KEY (option_id) REFERENCES post_poll_options(id) ON DELETE CASCADE
   );
 `)
-
-// `vods` gained `submitter_most_heroes` after it originally shipped — add it
-// to any pre-existing table instead of requiring a full rebuild.
-const vodsInfo = db.prepare(`PRAGMA table_info(vods)`).all()
-if (vodsInfo.length > 0 && !vodsInfo.some((c) => c.name === 'submitter_most_heroes')) {
-  db.exec('ALTER TABLE vods ADD COLUMN submitter_most_heroes TEXT')
-}
-
-export const DEMO_VOD_ID = 'demo-vod-1'
-
-// Upsert (rather than insert-if-missing) so the demo VOD's mock data stays in
-// sync with this file even after schema changes or edits, since there's no
-// real submission flow yet.
-db.prepare(`
-  INSERT INTO vods (
-    id, replay_code, youtube_id, hero, team_side, note,
-    submitter_battletag, submitter_rank_label, submitter_rank_icon, submitter_role_label,
-    submitter_most_heroes, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(id) DO UPDATE SET
-    replay_code = excluded.replay_code,
-    youtube_id = excluded.youtube_id,
-    hero = excluded.hero,
-    team_side = excluded.team_side,
-    note = excluded.note,
-    submitter_battletag = excluded.submitter_battletag,
-    submitter_rank_label = excluded.submitter_rank_label,
-    submitter_rank_icon = excluded.submitter_rank_icon,
-    submitter_role_label = excluded.submitter_role_label,
-    submitter_most_heroes = excluded.submitter_most_heroes
-`).run(
-  DEMO_VOD_ID,
-  'X8YZ4B',
-  'dZl1yGUetjI',
-  '아나',
-  'defense',
-  '왕의 길 2세컨포인트 포지셔닝이 너무 안 좋았던 것 같아요. 윈스턴한테 계속 다이브당했는데, 팀을 힐 하면서도 안전하게 있으려면 어떻게 포지셔닝해야 할까요?',
-  '아나원챔러#1234',
-  'Diamond IV',
-  null,
-  '서포터',
-  JSON.stringify([
-    { key: 'ana', name: '아나', portrait: null, timePlayed: 187200, gamesPlayed: 214 },
-    { key: 'zenyatta', name: '젠야타', portrait: null, timePlayed: 42300, gamesPlayed: 58 },
-    { key: 'moira', name: '모이라', portrait: null, timePlayed: 21600, gamesPlayed: 31 },
-  ]),
-  Date.now(),
-)
 
 export default db

@@ -92,7 +92,7 @@ const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>(functi
 
       // The IFrame API replaces `containerRef.current` outright with the
       // <iframe>, so `.yt-player__frame` no longer exists afterwards — sizing
-      // has to be forced via CSS on the resulting iframe (see VodReview.css),
+      // has to be forced via CSS on the resulting iframe (see board/Board.css),
       // not on this now-gone wrapper div.
       playerRef.current = new YT.Player(containerRef.current, {
         videoId,

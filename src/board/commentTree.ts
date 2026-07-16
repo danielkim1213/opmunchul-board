@@ -1,8 +1,8 @@
 // Small helpers for updating the nested comment state (top-level + one level
 // of replies) without refetching the whole feed on every interaction.
-import type { VodComment } from '../api/vod'
+import type { PostComment } from '../api/posts'
 
-export function findComment(comments: VodComment[], id: string): VodComment | null {
+export function findComment(comments: PostComment[], id: string): PostComment | null {
   for (const c of comments) {
     if (c.id === id) return c
     const reply = c.replies.find((r) => r.id === id)
@@ -11,7 +11,7 @@ export function findComment(comments: VodComment[], id: string): VodComment | nu
   return null
 }
 
-export function toggleUpvoteInTree(comments: VodComment[], id: string): VodComment[] {
+export function toggleUpvoteInTree(comments: PostComment[], id: string): PostComment[] {
   return comments.map((c) => {
     if (c.id === id) {
       return c.upvotedByMe
@@ -26,10 +26,10 @@ export function toggleUpvoteInTree(comments: VodComment[], id: string): VodComme
 }
 
 export function applyUpvoteResult(
-  comments: VodComment[],
+  comments: PostComment[],
   id: string,
   result: { upvotes: number; upvotedByMe: boolean },
-): VodComment[] {
+): PostComment[] {
   return comments.map((c) => {
     if (c.id === id) return { ...c, ...result }
     if (c.replies.some((r) => r.id === id)) {
@@ -40,9 +40,9 @@ export function applyUpvoteResult(
 }
 
 export function addReply(
-  comments: VodComment[],
+  comments: PostComment[],
   parentId: string,
-  reply: VodComment,
-): VodComment[] {
+  reply: PostComment,
+): PostComment[] {
   return comments.map((c) => (c.id === parentId ? { ...c, replies: [...c.replies, reply] } : c))
 }

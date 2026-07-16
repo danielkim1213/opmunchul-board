@@ -3,23 +3,13 @@ import AuthFlow from './auth/AuthFlow'
 import { ApiError, applyBlizzardLink, fetchMe, linkBlizzard, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
 import RankBadge from './components/RankBadge'
-import VodReview from './vod/VodReview'
+import Board from './board/Board'
 import './App.css'
-
-type View = 'board' | 'vod'
-
-const SAMPLE_POSTS = [
-  { id: 1, tag: '겐트위한', title: '겐지 원챔인데 마스터까지 가능함?', comments: 42 },
-  { id: 2, tag: '힐러의분노', title: '아나 수면총 각 공유합니다 (일리오스)', comments: 17 },
-  { id: 3, tag: '방벽뒤에숨어', title: '이번 시즌 탱커 티어 정리.txt', comments: 88 },
-  { id: 4, tag: '옵문철국밥', title: '경쟁전에서 한조 픽하는 사람 심리가 뭐냐', comments: 156 },
-]
 
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [restoring, setRestoring] = useState(true)
   const [changingAccount, setChangingAccount] = useState(false)
-  const [view, setView] = useState<View>('board')
 
   useEffect(() => {
     fetchMe()
@@ -65,22 +55,6 @@ export default function App() {
           <span className="topbar__mark" aria-hidden />
           옵문철 <em>게시판</em>
         </div>
-        {user && (
-          <nav className="topbar__nav">
-            <button
-              className={`topbar__nav-btn${view === 'board' ? ' topbar__nav-btn--active' : ''}`}
-              onClick={() => setView('board')}
-            >
-              게시판
-            </button>
-            <button
-              className={`topbar__nav-btn${view === 'vod' ? ' topbar__nav-btn--active' : ''}`}
-              onClick={() => setView('vod')}
-            >
-              🎬 VOD 피드백
-            </button>
-          </nav>
-        )}
         {user && (
           <div className="topbar__user">
             {user.avatar && <img src={user.avatar} alt="" />}
@@ -134,48 +108,9 @@ export default function App() {
             <AuthFlow onAuthenticated={setUser} />
           </section>
         </main>
-      ) : view === 'vod' ? (
-        <VodReview />
       ) : (
         <main className="board">
-          <div className="board__welcome">
-            <h1>
-              환영합니다, <span>{user.username}</span> 님
-            </h1>
-            <p>
-              <span className="board__bt">{user.battletag}</span> · 인증 티어{' '}
-              <RankBadge
-                rankLabel={user.rankLabel}
-                rankIcon={user.rankIcon}
-                roleLabel={user.roleLabel}
-                mostHeroes={user.mostHeroes}
-              />{' '}
-              배지가 부여되었습니다.
-            </p>
-          </div>
-
-          <div className="board__list">
-            <div className="board__header">
-              <h2>인기 글</h2>
-              <button className="btn btn--primary btn--small">글쓰기</button>
-            </div>
-            {SAMPLE_POSTS.map((post) => (
-              <article key={post.id} className="post">
-                <div className="post__title">{post.title}</div>
-                <div className="post__meta">
-                  <span className="post__tag">{post.tag}</span>
-                  <span className="post__comments">💬 {post.comments}</span>
-                </div>
-              </article>
-            ))}
-            <p className="board__note">
-              게시판 기능은 다음 단계에서 구현될 예정입니다. 그동안{' '}
-              <button className="link-btn" onClick={() => setView('vod')}>
-                VOD 피드백
-              </button>{' '}
-              기능을 먼저 만나보세요.
-            </p>
-          </div>
+          <Board />
         </main>
       )}
 

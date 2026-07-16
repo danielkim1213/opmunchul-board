@@ -1,15 +1,17 @@
-import type { VodComment } from '../api/vod'
+import type { PostComment } from '../api/posts'
 import RankBadge from '../components/RankBadge'
 import { formatTimestamp } from './time'
 
 const HIGHLIGHT_WINDOW_SECONDS = 5
 
 interface CommentCardProps {
-  comment: VodComment
+  comment: PostComment
+  /** 'plain' (tip posts) hides the timestamp/global badge entirely. */
+  variant: 'plain' | 'feedback'
   isActive: boolean
-  currentTime: number
+  currentTime?: number
   isReply?: boolean
-  onSeek: (seconds: number) => void
+  onSeek?: (seconds: number) => void
   onUpvote: (id: string) => void
   replyOpen: boolean
   replyContent: string
@@ -18,12 +20,15 @@ interface CommentCardProps {
   onReplySubmit: () => void
   replySubmitting: boolean
   registerRef: (el: HTMLLIElement | null) => void
+  /** False when the viewer doesn't meet the post's tier requirement — locks upvote/reply. */
+  canInteract?: boolean
 }
 
 export default function CommentCard({
   comment,
+  variant,
   isActive,
-  currentTime,
+  currentTime = 0,
   isReply = false,
   onSeek,
   onUpvote,
@@ -34,6 +39,7 @@ export default function CommentCard({
   onReplySubmit,
   replySubmitting,
   registerRef,
+  canInteract = true,
 }: CommentCardProps) {
   const isGlobal = comment.timestampSeconds === null
 
@@ -52,18 +58,19 @@ export default function CommentCard({
           roleLabel={comment.author.roleLabel}
           mostHeroes={comment.author.mostHeroes}
         />
-        {isGlobal ? (
-          <span className="global-badge">🗒 전체 피드백</span>
-        ) : (
-          <button
-            type="button"
-            className="timestamp-badge"
-            onClick={() => onSeek(comment.timestampSeconds as number)}
-            title="이 시점으로 영상 이동"
-          >
-            [{formatTimestamp(comment.timestampSeconds as number)}]
-          </button>
-        )}
+        {variant === 'feedback' &&
+          (isGlobal ? (
+            <span className="global-badge">🗒 전체 피드백</span>
+          ) : (
+            <button
+              type="button"
+              className="timestamp-badge"
+              onClick={() => onSeek?.(comment.timestampSeconds as number)}
+              title="이 시점으로 영상 이동"
+            >
+              [{formatTimestamp(comment.timestampSeconds as number)}]
+            </button>
+          ))}
       </div>
 
       <p className="comment-card__content">{comment.content}</p>
@@ -73,6 +80,8 @@ export default function CommentCard({
           type="button"
           className={`action-btn${comment.upvotedByMe ? ' action-btn--active' : ''}`}
           onClick={() => onUpvote(comment.id)}
+          disabled={!canInteract}
+          title={canInteract ? undefined : '자격 티어가 아닙니다'}
         >
           👍 따봉{comment.upvotes > 0 ? ` ${comment.upvotes}` : ''}
         </button>
@@ -81,13 +90,15 @@ export default function CommentCard({
             type="button"
             className="action-btn"
             onClick={() => onReplyToggle(replyOpen ? null : comment.id)}
+            disabled={!canInteract}
+            title={canInteract ? undefined : '자격 티어가 아닙니다'}
           >
             💬 답글{comment.replies.length > 0 ? ` ${comment.replies.length}` : ''}
           </button>
         )}
       </div>
 
-      {replyOpen && !isReply && (
+      {replyOpen && !isReply && canInteract && (
         <div className="reply-form">
           <textarea
             value={replyContent}
@@ -113,6 +124,7 @@ export default function CommentCard({
             <CommentCard
               key={reply.id}
               comment={reply}
+              variant={variant}
               isActive={
                 reply.timestampSeconds !== null &&
                 Math.abs(reply.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
@@ -128,6 +140,7 @@ export default function CommentCard({
               onReplySubmit={() => {}}
               replySubmitting={false}
               registerRef={() => {}}
+              canInteract={canInteract}
             />
           ))}
         </ul>
