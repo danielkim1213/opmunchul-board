@@ -19,6 +19,7 @@ import {
   getSwitchAccountAuthorizeUrl,
   isBlizzardConfigured,
 } from './blizzard.js'
+import { registerVodRoutes } from './vod.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
@@ -487,6 +488,11 @@ app.post('/api/auth/logout', (req, res) => {
   if (auth) deleteSession.run(auth.token)
   return res.json({ ok: true })
 })
+
+/* ------------------------------------------------------------------ *
+ * VOD review + timestamped comments
+ * ------------------------------------------------------------------ */
+registerVodRoutes(app, { authenticate })
 
 app.get('/health', (_req, res) => {
   res.status(200).json({ ok: true })

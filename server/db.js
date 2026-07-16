@@ -63,6 +63,69 @@ db.exec(`
     expires_at    INTEGER NOT NULL,
     consumed      INTEGER NOT NULL DEFAULT 0
   );
+
+  -- VOD review submissions. Submitter identity is denormalized (rather than a
+  -- users FK) because a submission is a snapshot of the author's rank at the
+  -- time it was posted, and demo VODs aren't necessarily tied to a real login.
+  CREATE TABLE IF NOT EXISTS vods (
+    id                    TEXT PRIMARY KEY,
+    replay_code           TEXT NOT NULL,
+    youtube_id            TEXT NOT NULL,
+    hero                  TEXT NOT NULL,
+    team_side             TEXT NOT NULL,
+    note                  TEXT NOT NULL,
+    submitter_battletag   TEXT NOT NULL,
+    submitter_rank_label  TEXT NOT NULL,
+    submitter_rank_icon   TEXT,
+    submitter_role_label  TEXT,
+    created_at            INTEGER NOT NULL
+  );
+
+  -- Timestamped feedback comments on a VOD. parent_id supports a single
+  -- level of replies (a reply's parent is always a top-level comment).
+  CREATE TABLE IF NOT EXISTS vod_comments (
+    id                TEXT PRIMARY KEY,
+    vod_id            TEXT NOT NULL,
+    parent_id         TEXT,
+    username_key      TEXT NOT NULL,
+    timestamp_seconds INTEGER NOT NULL,
+    content           TEXT NOT NULL,
+    created_at        INTEGER NOT NULL,
+    FOREIGN KEY (vod_id) REFERENCES vods(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_id) REFERENCES vod_comments(id) ON DELETE CASCADE,
+    FOREIGN KEY (username_key) REFERENCES users(username_key)
+  );
+
+  CREATE TABLE IF NOT EXISTS vod_comment_upvotes (
+    comment_id   TEXT NOT NULL,
+    username_key TEXT NOT NULL,
+    PRIMARY KEY (comment_id, username_key),
+    FOREIGN KEY (comment_id) REFERENCES vod_comments(id) ON DELETE CASCADE
+  );
 `)
+
+export const DEMO_VOD_ID = 'demo-vod-1'
+
+if (!db.prepare('SELECT 1 FROM vods WHERE id = ?').get(DEMO_VOD_ID)) {
+  db.prepare(`
+    INSERT INTO vods (
+      id, replay_code, youtube_id, hero, team_side, note,
+      submitter_battletag, submitter_rank_label, submitter_rank_icon, submitter_role_label,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    DEMO_VOD_ID,
+    'X8YZ4B',
+    'dZl1yGUetjI',
+    '아나',
+    'defense',
+    '왕의 길 2세컨포인트 포지셔닝이 너무 안 좋았던 것 같아요. 윈스턴한테 계속 다이브당했는데, 팀을 힐 하면서도 안전하게 있으려면 어떻게 포지셔닝해야 할까요?',
+    '아나원챔러#1234',
+    'Diamond IV',
+    null,
+    '서포터',
+    Date.now(),
+  )
+}
 
 export default db

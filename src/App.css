@@ -37,6 +37,37 @@
   box-shadow: 0 0 12px rgba(249, 158, 26, 0.6);
 }
 
+.topbar__nav {
+  display: flex;
+  gap: 6px;
+  background: rgba(6, 12, 24, 0.5);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.topbar__nav-btn {
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-family: 'Rajdhani', 'Noto Sans KR', sans-serif;
+  font-weight: 700;
+  font-size: 13.5px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.topbar__nav-btn:hover {
+  color: var(--text);
+}
+
+.topbar__nav-btn--active {
+  background: linear-gradient(180deg, var(--orange-hover), var(--orange));
+  color: #1a1206;
+}
+
 .topbar__user {
   display: flex;
   align-items: center;
@@ -743,6 +774,18 @@
   font-size: 13px;
   text-align: center;
   margin-top: 20px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--orange);
+  font-weight: 700;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .not-found-message {

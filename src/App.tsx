@@ -3,7 +3,10 @@ import AuthFlow from './auth/AuthFlow'
 import { ApiError, applyBlizzardLink, fetchMe, linkBlizzard, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
 import RankBadge from './components/RankBadge'
+import VodReview from './vod/VodReview'
 import './App.css'
+
+type View = 'board' | 'vod'
 
 const SAMPLE_POSTS = [
   { id: 1, tag: '겐트위한', title: '겐지 원챔인데 마스터까지 가능함?', comments: 42 },
@@ -16,6 +19,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [restoring, setRestoring] = useState(true)
   const [changingAccount, setChangingAccount] = useState(false)
+  const [view, setView] = useState<View>('board')
 
   useEffect(() => {
     fetchMe()
@@ -61,6 +65,22 @@ export default function App() {
           <span className="topbar__mark" aria-hidden />
           옵문철 <em>게시판</em>
         </div>
+        {user && (
+          <nav className="topbar__nav">
+            <button
+              className={`topbar__nav-btn${view === 'board' ? ' topbar__nav-btn--active' : ''}`}
+              onClick={() => setView('board')}
+            >
+              게시판
+            </button>
+            <button
+              className={`topbar__nav-btn${view === 'vod' ? ' topbar__nav-btn--active' : ''}`}
+              onClick={() => setView('vod')}
+            >
+              🎬 VOD 피드백
+            </button>
+          </nav>
+        )}
         {user && (
           <div className="topbar__user">
             {user.avatar && <img src={user.avatar} alt="" />}
@@ -114,6 +134,8 @@ export default function App() {
             <AuthFlow onAuthenticated={setUser} />
           </section>
         </main>
+      ) : view === 'vod' ? (
+        <VodReview />
       ) : (
         <main className="board">
           <div className="board__welcome">
@@ -147,7 +169,11 @@ export default function App() {
               </article>
             ))}
             <p className="board__note">
-              게시판 기능은 다음 단계에서 구현될 예정입니다.
+              게시판 기능은 다음 단계에서 구현될 예정입니다. 그동안{' '}
+              <button className="link-btn" onClick={() => setView('vod')}>
+                VOD 피드백
+              </button>{' '}
+              기능을 먼저 만나보세요.
             </p>
           </div>
         </main>
