@@ -69,6 +69,20 @@ Root Directory를 `server`만 잡으면 **화면이 안 나옵니다.**
 
 같은 도메인에서 `/` = 화면, `/api/*` = API, `/health` = 헬스체크.
 
+### SQLite 데이터 유지 (필수)
+
+게시글·댓글·투표·계정은 전부 서버 SQLite(`data.sqlite`)에 저장됩니다.
+컨테이너 로컬 디스크에 두면 **재배포마다 파일이 초기화**되어 글이 사라집니다.
+
+Railway에서 영구 저장하려면:
+
+1. 서비스 → **Volumes** → Volume 추가
+2. Mount Path를 `/data` 로 설정 (Dockerfile 기본 `DATA_DIR=/data`)
+3. 재배포
+
+다른 경로를 쓰려면 환경변수 `DATA_DIR`을 그 마운트 경로로 맞추면 됩니다.
+로컬 개발은 기본값(`server/data.sqlite`)을 그대로 씁니다.
+
 ## OverFast 정책
 
 - 유저당 UTC 기준 **하루 1회** 전적 갱신

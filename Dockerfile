@@ -24,6 +24,9 @@ WORKDIR /app
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
 ENV PUBLIC_DIR=/app/server/public
+# Persist SQLite outside the image filesystem. Mount a Railway Volume at /data
+# (or override DATA_DIR) so posts/users survive redeploys.
+ENV DATA_DIR=/data
 
 COPY --from=build /app/server /app/server
 COPY --from=build /app/dist /app/server/public
