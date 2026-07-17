@@ -94,7 +94,7 @@ export default function BoardList({
                   <div className="post-card__title">{post.title}</div>
                   <div className="post-card__meta">
                     <span className="post-card__author">
-                      {post.author.battletag}
+                      {post.author.username}
                       <RankBadge
                         rankLabel={post.author.rankLabel}
                         rankIcon={post.author.rankIcon}

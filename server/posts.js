@@ -45,16 +45,25 @@ const insertPost = db.prepare(`
     replay_code, youtube_id, hero, team_side, created_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
+const updatePostRow = db.prepare(`
+  UPDATE posts
+  SET title = ?, body = ?, allowed_tiers = ?, replay_code = ?, youtube_id = ?, hero = ?, team_side = ?, updated_at = ?
+  WHERE id = ?
+`)
+const deletePostRow = db.prepare('DELETE FROM posts WHERE id = ?')
 const findPostRow = db.prepare('SELECT * FROM posts WHERE id = ?')
+// Author's battletag is intentionally not selected here — posts/comments
+// are public, and this is a pseudonymous board, so only `username` (the
+// account handle the user picked) is ever shown to other members.
 const listPostsRaw = db.prepare(`
-  SELECT p.*, u.username, u.battletag, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT p.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
   WHERE (? IS NULL OR p.type = ?)
   ORDER BY p.created_at DESC
 `)
 const findPostWithAuthor = db.prepare(`
-  SELECT p.*, u.username, u.battletag, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT p.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
   WHERE p.id = ?
@@ -88,9 +97,11 @@ const insertComment = db.prepare(`
   INSERT INTO post_comments (id, post_id, parent_id, username_key, timestamp_seconds, content, created_at)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `)
+const updateCommentRow = db.prepare('UPDATE post_comments SET content = ?, updated_at = ? WHERE id = ?')
+const deleteCommentRow = db.prepare('DELETE FROM post_comments WHERE id = ?')
 const findComment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
 const listComments = db.prepare(`
-  SELECT c.*, u.username, u.battletag, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT c.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM post_comments c
   JOIN users u ON u.username_key = c.username_key
   WHERE c.post_id = ?
@@ -130,7 +141,6 @@ function parseMostHeroes(raw) {
 function toPublicAuthor(row) {
   return {
     username: row.username,
-    battletag: row.battletag,
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     roleLabel: roleLabelOf(row.rank_role),
@@ -150,7 +160,7 @@ function pollSummary(postId, viewerKey) {
 }
 
 /** Shared summary fields for both list rows and single-post detail. */
-function toPublicPostBase(row, viewerRankLabel) {
+function toPublicPostBase(row, viewerRankLabel, viewerKey) {
   const allowedTiers = parseAllowedTiers(row.allowed_tiers)
   return {
     id: row.id,
@@ -160,11 +170,13 @@ function toPublicPostBase(row, viewerRankLabel) {
     allowedTiers,
     viewerEligible: isTierAllowed(viewerRankLabel, allowedTiers),
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? null,
+    isMine: viewerKey ? row.author_username_key === viewerKey : false,
   }
 }
 
 function toPublicPostSummary(row, viewerRankLabel, viewerKey) {
-  const base = toPublicPostBase(row, viewerRankLabel)
+  const base = toPublicPostBase(row, viewerRankLabel, viewerKey)
   if (row.type === 'poll') {
     const { totalVotes, options } = pollSummary(row.id, viewerKey)
     return { ...base, optionCount: options.length, voteCount: totalVotes }
@@ -179,7 +191,7 @@ function toPublicPostSummary(row, viewerRankLabel, viewerKey) {
 }
 
 function toPublicPostDetail(row, viewerRankLabel, viewerKey) {
-  const base = toPublicPostBase(row, viewerRankLabel)
+  const base = toPublicPostBase(row, viewerRankLabel, viewerKey)
   if (row.type === 'tip') {
     return { ...base, body: row.body, commentCount: countComments.get(row.id).n }
   }
@@ -206,9 +218,11 @@ function toPublicComment(row, viewerKey) {
     timestampSeconds: row.timestamp_seconds,
     content: row.content,
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? null,
     author: toPublicAuthor(row),
     upvotes: countUpvotes.get(row.id).n,
     upvotedByMe: viewerKey ? Boolean(hasUpvoted.get(row.id, viewerKey)) : false,
+    isMine: viewerKey ? row.username_key === viewerKey : false,
   }
 }
 
@@ -265,14 +279,15 @@ export function registerPostRoutes(app, { authenticate }) {
       insertPost.run(id, type, title, body, auth.user.username_key, null, null, null, null, null, createdAt)
     } else if (type === 'feedback') {
       const body = String(req.body?.body ?? '').trim()
-      const replayCode = String(req.body?.replayCode ?? '').trim()
+      // Replay code is a nice-to-have, not required — plenty of feedback
+      // requests are asked from an already-expired replay.
+      const replayCode = String(req.body?.replayCode ?? '').trim() || null
       const hero = String(req.body?.hero ?? '').trim()
-      const teamSide = req.body?.teamSide === 'attack' ? 'attack' : 'defense'
+      const teamSide = req.body?.teamSide === 'blue' ? 'blue' : 'red'
       const youtubeId = extractYoutubeId(req.body?.youtubeUrl ?? req.body?.youtubeId)
 
       if (!body) return res.status(400).json({ error: 'EMPTY_BODY' })
       if (body.length > FEEDBACK_NOTE_MAX) return res.status(400).json({ error: 'BODY_TOO_LONG' })
-      if (!replayCode) return res.status(400).json({ error: 'EMPTY_REPLAY_CODE' })
       if (!hero) return res.status(400).json({ error: 'EMPTY_HERO' })
       if (!youtubeId) return res.status(400).json({ error: 'INVALID_YOUTUBE_URL' })
 
@@ -322,6 +337,90 @@ export function registerPostRoutes(app, { authenticate }) {
     return res.status(201).json({
       post: toPublicPostDetail(row, auth.user.rank_label, auth.user.username_key),
     })
+  })
+
+  app.patch('/api/posts/:id', (req, res) => {
+    const auth = authenticate(req)
+    if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+    const row = findPostRow.get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
+    if (row.author_username_key !== auth.user.username_key) {
+      return res.status(403).json({ error: 'FORBIDDEN' })
+    }
+
+    const title = req.body?.title !== undefined ? String(req.body.title).trim() : row.title
+    if (!title) return res.status(400).json({ error: 'EMPTY_TITLE' })
+    if (title.length > TITLE_MAX) return res.status(400).json({ error: 'TITLE_TOO_LONG' })
+
+    const allowedTiers =
+      row.type === 'tip'
+        ? []
+        : req.body?.allowedTiers !== undefined
+          ? sanitizeAllowedTiers(req.body.allowedTiers)
+          : parseAllowedTiers(row.allowed_tiers)
+
+    let body = row.body
+    let replayCode = row.replay_code
+    let youtubeId = row.youtube_id
+    let hero = row.hero
+    let teamSide = row.team_side
+
+    if (row.type === 'tip' || row.type === 'feedback') {
+      const bodyMax = row.type === 'tip' ? TIP_BODY_MAX : FEEDBACK_NOTE_MAX
+      body = req.body?.body !== undefined ? String(req.body.body).trim() : row.body
+      if (!body) return res.status(400).json({ error: 'EMPTY_BODY' })
+      if (body.length > bodyMax) return res.status(400).json({ error: 'BODY_TOO_LONG' })
+    }
+
+    if (row.type === 'feedback') {
+      // Replay code stays optional on edit too.
+      replayCode =
+        req.body?.replayCode !== undefined ? String(req.body.replayCode).trim() || null : row.replay_code
+      hero = req.body?.hero !== undefined ? String(req.body.hero).trim() : row.hero
+      if (!hero) return res.status(400).json({ error: 'EMPTY_HERO' })
+      teamSide = req.body?.teamSide === 'blue' ? 'blue' : req.body?.teamSide === 'red' ? 'red' : row.team_side
+      if (req.body?.youtubeUrl !== undefined) {
+        const parsed = extractYoutubeId(req.body.youtubeUrl)
+        if (!parsed) return res.status(400).json({ error: 'INVALID_YOUTUBE_URL' })
+        youtubeId = parsed
+      }
+    }
+    // poll: options are intentionally not editable once created (keeps
+    // existing votes meaningful) — only title/allowedTiers change above.
+
+    updatePostRow.run(
+      title,
+      body,
+      JSON.stringify(allowedTiers),
+      replayCode,
+      youtubeId,
+      hero,
+      teamSide,
+      Date.now(),
+      row.id,
+    )
+
+    const updated = findPostWithAuthor.get(row.id)
+    return res.json({
+      post: toPublicPostDetail(updated, auth.user.rank_label, auth.user.username_key),
+    })
+  })
+
+  app.delete('/api/posts/:id', (req, res) => {
+    const auth = authenticate(req)
+    if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+    const row = findPostRow.get(req.params.id)
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
+    if (row.author_username_key !== auth.user.username_key) {
+      return res.status(403).json({ error: 'FORBIDDEN' })
+    }
+
+    // Cascades to post_comments / post_comment_upvotes / post_poll_options /
+    // post_poll_votes now that foreign_keys enforcement is on (see db.js).
+    deletePostRow.run(row.id)
+    return res.json({ ok: true })
   })
 
   app.get('/api/posts/:id/comments', (req, res) => {
@@ -392,12 +491,13 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const withAuthor = {
       id,
+      username_key: auth.user.username_key,
       parent_id: parentId,
       timestamp_seconds: timestampSeconds,
       content,
       created_at: createdAt,
+      updated_at: null,
       username: auth.user.username,
-      battletag: auth.user.battletag,
       rank_label: auth.user.rank_label,
       rank_icon: auth.user.rank_icon,
       rank_role: auth.user.rank_role,
@@ -406,6 +506,49 @@ export function registerPostRoutes(app, { authenticate }) {
     return res.status(201).json({
       comment: { ...toPublicComment(withAuthor, auth.user.username_key), replies: [] },
     })
+  })
+
+  app.patch('/api/posts/comments/:id', (req, res) => {
+    const auth = authenticate(req)
+    if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+    const comment = findComment.get(req.params.id)
+    if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
+    if (comment.username_key !== auth.user.username_key) {
+      return res.status(403).json({ error: 'FORBIDDEN' })
+    }
+
+    const content = String(req.body?.content ?? '').trim()
+    if (!content) return res.status(400).json({ error: 'EMPTY_CONTENT' })
+    if (content.length > COMMENT_MAX) return res.status(400).json({ error: 'CONTENT_TOO_LONG' })
+
+    updateCommentRow.run(content, Date.now(), comment.id)
+
+    const row = findComment.get(comment.id)
+    const withAuthor = {
+      ...row,
+      username: auth.user.username,
+      rank_label: auth.user.rank_label,
+      rank_icon: auth.user.rank_icon,
+      rank_role: auth.user.rank_role,
+      most_heroes: auth.user.most_heroes,
+    }
+    return res.json({ comment: toPublicComment(withAuthor, auth.user.username_key) })
+  })
+
+  app.delete('/api/posts/comments/:id', (req, res) => {
+    const auth = authenticate(req)
+    if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+
+    const comment = findComment.get(req.params.id)
+    if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
+    if (comment.username_key !== auth.user.username_key) {
+      return res.status(403).json({ error: 'FORBIDDEN' })
+    }
+
+    // Cascades to replies + upvotes now that foreign_keys enforcement is on.
+    deleteCommentRow.run(comment.id)
+    return res.json({ ok: true })
   })
 
   app.post('/api/posts/comments/:id/upvote', (req, res) => {

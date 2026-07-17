@@ -8,9 +8,11 @@ import TipPostDetail from './TipPostDetail'
 interface PostDetailProps {
   postId: string
   onBack: () => void
+  onEdit: (post: PostDetailData) => void
+  onDeleted: () => void
 }
 
-export default function PostDetail({ postId, onBack }: PostDetailProps) {
+export default function PostDetail({ postId, onBack, onEdit, onDeleted }: PostDetailProps) {
   const [post, setPost] = useState<PostDetailData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +47,13 @@ export default function PostDetail({ postId, onBack }: PostDetailProps) {
     )
   }
 
-  if (post.type === 'tip') return <TipPostDetail post={post} onBack={onBack} />
-  if (post.type === 'feedback') return <FeedbackPostDetail post={post} onBack={onBack} />
-  return <PollPostDetail post={post} onBack={onBack} />
+  if (post.type === 'tip') {
+    return <TipPostDetail post={post} onBack={onBack} onEdit={() => onEdit(post)} onDeleted={onDeleted} />
+  }
+  if (post.type === 'feedback') {
+    return (
+      <FeedbackPostDetail post={post} onBack={onBack} onEdit={() => onEdit(post)} onDeleted={onDeleted} />
+    )
+  }
+  return <PollPostDetail post={post} onBack={onBack} onEdit={() => onEdit(post)} onDeleted={onDeleted} />
 }

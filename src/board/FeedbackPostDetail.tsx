@@ -3,15 +3,25 @@ import type { FormEvent } from 'react'
 import { ApiError } from '../api/auth'
 import {
   addPostComment,
+  deletePost,
+  deletePostComment,
   fetchPostComments,
   togglePostCommentUpvote,
+  updatePostComment,
 } from '../api/posts'
 import type { FeedbackPostDetail as FeedbackPost, PostComment } from '../api/posts'
 import YouTubePlayer from '../components/YouTubePlayer'
 import type { YouTubePlayerHandle } from '../components/YouTubePlayer'
 import RankBadge from '../components/RankBadge'
 import CommentCard from './CommentCard'
-import { addReply, applyUpvoteResult, findComment, toggleUpvoteInTree } from './commentTree'
+import {
+  addReply,
+  applyUpvoteResult,
+  findComment,
+  removeCommentFromTree,
+  toggleUpvoteInTree,
+  updateCommentInTree,
+} from './commentTree'
 import { formatTimestamp, parseTimestamp } from './time'
 
 const HIGHLIGHT_WINDOW_SECONDS = 5
@@ -20,8 +30,8 @@ const COMMENT_MAX = 500
 type SortMode = 'timestamp' | 'likes'
 
 const TEAM_SIDE_LABEL: Record<FeedbackPost['teamSide'], string> = {
-  attack: '공격',
-  defense: '방어',
+  red: '레드팀',
+  blue: '블루팀',
 }
 
 function hasTimestamp(c: PostComment): c is PostComment & { timestampSeconds: number } {
@@ -31,9 +41,11 @@ function hasTimestamp(c: PostComment): c is PostComment & { timestampSeconds: nu
 interface FeedbackPostDetailProps {
   post: FeedbackPost
   onBack: () => void
+  onEdit: () => void
+  onDeleted: () => void
 }
 
-export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailProps) {
+export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: FeedbackPostDetailProps) {
   const [comments, setComments] = useState<PostComment[]>([])
   const [loadingComments, setLoadingComments] = useState(true)
 
@@ -45,6 +57,7 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [deletingPost, setDeletingPost] = useState(false)
 
   const [sortMode, setSortMode] = useState<SortMode>('timestamp')
   const [syncMode, setSyncMode] = useState(false)
@@ -146,6 +159,31 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
     }
   }
 
+  async function handleCommentEdit(commentId: string, newContent: string) {
+    const updated = await updatePostComment(commentId, newContent)
+    setComments((prev) =>
+      updateCommentInTree(prev, commentId, { content: updated.content, updatedAt: updated.updatedAt }),
+    )
+  }
+
+  async function handleCommentDelete(commentId: string) {
+    await deletePostComment(commentId)
+    setComments((prev) => removeCommentFromTree(prev, commentId))
+  }
+
+  async function handleDeletePost() {
+    if (!window.confirm('게시글을 삭제하시겠어요? 피드백도 모두 함께 삭제되며 되돌릴 수 없습니다.')) return
+    setDeletingPost(true)
+    try {
+      await deletePost(post.id)
+      onDeleted()
+    } catch {
+      window.alert('삭제에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setDeletingPost(false)
+    }
+  }
+
   async function handleReplySubmit(parentId: string) {
     const trimmed = replyContent.trim()
     if (!trimmed) return
@@ -238,25 +276,44 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
           <YouTubePlayer ref={playerRef} videoId={post.youtubeId} onTimeUpdate={setCurrentTime} />
 
           <div className="vod-meta">
-            <span className="post-detail__type-badge post-detail__type-badge--feedback">
-              🎬 피드백
-            </span>
+            <div className="post-detail__header-top">
+              <span className="post-detail__type-badge post-detail__type-badge--feedback">
+                🎬 피드백
+              </span>
+              {post.isMine && (
+                <div className="post-detail__actions">
+                  <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
+                    ✏️ 수정
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={handleDeletePost}
+                    disabled={deletingPost}
+                  >
+                    🗑 삭제
+                  </button>
+                </div>
+              )}
+            </div>
             <h1 className="post-detail__title">{post.title}</h1>
             <div className="vod-meta__grid">
-              <div className="vod-meta__field">
-                <span className="vod-meta__label">리플레이 코드</span>
-                <code className="vod-meta__code">{post.replayCode}</code>
-              </div>
+              {post.replayCode && (
+                <div className="vod-meta__field">
+                  <span className="vod-meta__label">리플레이 코드</span>
+                  <code className="vod-meta__code">{post.replayCode}</code>
+                </div>
+              )}
               <div className="vod-meta__field">
                 <span className="vod-meta__label">역할 / 영웅</span>
                 <span className="vod-meta__value">
-                  {post.hero} <span className="vod-meta__side">({TEAM_SIDE_LABEL[post.teamSide]} 팀)</span>
+                  {post.hero} <span className="vod-meta__side">({TEAM_SIDE_LABEL[post.teamSide]})</span>
                 </span>
               </div>
               <div className="vod-meta__field vod-meta__field--submitter">
                 <span className="vod-meta__label">작성자</span>
                 <span className="vod-meta__value vod-meta__submitter">
-                  {post.author.battletag}
+                  {post.author.username}
                   <RankBadge
                     rankLabel={post.author.rankLabel}
                     rankIcon={post.author.rankIcon}
@@ -267,7 +324,9 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
               </div>
             </div>
             <div className="vod-meta__note">
-              <span className="vod-meta__label">요청 노트</span>
+              <span className="vod-meta__label">
+                요청 노트{post.updatedAt && <span className="post-detail__edited">(수정됨)</span>}
+              </span>
               <p>{post.body}</p>
             </div>
           </div>
@@ -395,6 +454,8 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
                       currentTime={currentTime}
                       onSeek={handleSeek}
                       onUpvote={handleUpvote}
+                      onEdit={handleCommentEdit}
+                      onDelete={handleCommentDelete}
                       canInteract={canInteract}
                       replyOpen={replyTarget === c.id}
                       replyContent={replyTarget === c.id ? replyContent : ''}
@@ -437,6 +498,8 @@ export default function FeedbackPostDetail({ post, onBack }: FeedbackPostDetailP
                       currentTime={currentTime}
                       onSeek={handleSeek}
                       onUpvote={handleUpvote}
+                      onEdit={handleCommentEdit}
+                      onDelete={handleCommentDelete}
                       canInteract={canInteract}
                       replyOpen={replyTarget === c.id}
                       replyContent={replyTarget === c.id ? replyContent : ''}

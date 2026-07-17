@@ -15,6 +15,12 @@ console.log('SQLite path:', DB_PATH)
 
 const db = new DatabaseSync(DB_PATH)
 
+// Required for ON DELETE CASCADE (post_comments/post_comment_upvotes/
+// post_poll_options/post_poll_votes) to actually take effect — SQLite
+// ignores those clauses unless foreign key enforcement is turned on, and
+// it's off by default on every new connection.
+db.exec('PRAGMA foreign_keys = ON;')
+
 // The account model switched from BattleTag-keyed rows to user-chosen
 // usernames (BattleTag now comes from Blizzard OAuth). The old `users` table
 // keyed by `battletag_key` is incompatible, so drop the legacy schema.
@@ -137,5 +143,24 @@ db.exec(`
     FOREIGN KEY (option_id) REFERENCES post_poll_options(id) ON DELETE CASCADE
   );
 `)
+
+// --- Non-destructive migrations for real user data created before these
+// features existed. Never drop/recreate `posts`/`post_comments` here. ---
+
+function addColumnIfMissing(table, column, ddl) {
+  const info = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (info.length > 0 && !info.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl};`)
+  }
+}
+
+// Supports "edited" indicators for posts/comments.
+addColumnIfMissing('posts', 'updated_at', 'updated_at INTEGER')
+addColumnIfMissing('post_comments', 'updated_at', 'updated_at INTEGER')
+
+// team_side terminology moved from attack/defense to red/blue — remap any
+// rows written under the old scheme so old feedback posts still render.
+db.exec(`UPDATE posts SET team_side = 'red' WHERE team_side = 'attack';`)
+db.exec(`UPDATE posts SET team_side = 'blue' WHERE team_side = 'defense';`)
 
 export default db

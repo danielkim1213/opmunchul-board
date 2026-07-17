@@ -11,7 +11,7 @@ function apiUrl(path: string): string {
 }
 
 export type PostType = 'tip' | 'feedback' | 'poll'
-export type TeamSide = 'attack' | 'defense'
+export type TeamSide = 'red' | 'blue'
 
 // Mirrors server/tiers.js TIER_ORDER.
 export type TierKey =
@@ -46,9 +46,10 @@ export const TIER_LABEL_KO: Record<TierKey, string> = {
   ultimate: '챔피언',
 }
 
+// `battletag` is intentionally not exposed here — this is a pseudonymous
+// board, so only the account's chosen `username` is ever shown to others.
 export interface PostAuthor {
   username: string
-  battletag: string
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -63,6 +64,9 @@ interface PostBase {
   /** Whether the current viewer's tier satisfies allowedTiers (participation, not visibility). */
   viewerEligible: boolean
   createdAt: number
+  updatedAt: number | null
+  /** Whether the current viewer is the author — gates edit/delete UI. */
+  isMine: boolean
 }
 
 export interface TipPostSummary extends PostBase {
@@ -72,7 +76,7 @@ export interface TipPostSummary extends PostBase {
 export interface FeedbackPostSummary extends PostBase {
   type: 'feedback'
   commentCount: number
-  replayCode: string
+  replayCode: string | null
   youtubeId: string
   hero: string
   teamSide: TeamSide
@@ -92,7 +96,7 @@ export interface TipPostDetail extends PostBase {
 export interface FeedbackPostDetail extends PostBase {
   type: 'feedback'
   body: string
-  replayCode: string
+  replayCode: string | null
   youtubeId: string
   hero: string
   teamSide: TeamSide
@@ -113,7 +117,6 @@ export type PostDetail = TipPostDetail | FeedbackPostDetail | PollPostDetail
 
 export interface PostCommentAuthor {
   username: string
-  battletag: string
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -127,9 +130,12 @@ export interface PostComment {
   timestampSeconds: number | null
   content: string
   createdAt: number
+  updatedAt: number | null
   author: PostCommentAuthor
   upvotes: number
   upvotedByMe: boolean
+  /** Whether the current viewer wrote this comment — gates edit/delete UI. */
+  isMine: boolean
   replies: PostComment[]
 }
 
@@ -139,13 +145,24 @@ export type CreatePostInput =
       type: 'feedback'
       title: string
       body: string
-      replayCode: string
+      replayCode?: string
       hero: string
       teamSide: TeamSide
       youtubeUrl: string
       allowedTiers?: TierKey[]
     }
   | { type: 'poll'; title: string; options: string[]; allowedTiers?: TierKey[] }
+
+/** Partial update — only fields relevant to the post's type are applied server-side. */
+export interface UpdatePostInput {
+  title?: string
+  body?: string
+  replayCode?: string | null
+  hero?: string
+  teamSide?: TeamSide
+  youtubeUrl?: string
+  allowedTiers?: TierKey[]
+}
 
 async function handle<T>(res: Response): Promise<T> {
   let data: unknown = null
@@ -189,6 +206,21 @@ export async function createPost(input: CreatePostInput): Promise<PostDetail> {
   return post
 }
 
+export async function updatePost(id: string, input: UpdatePostInput): Promise<PostDetail> {
+  const res = await fetch(apiUrl(`/posts/${id}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(input),
+  })
+  const { post } = await handle<{ post: PostDetail }>(res)
+  return post
+}
+
+export async function deletePost(id: string): Promise<void> {
+  const res = await fetch(apiUrl(`/posts/${id}`), { method: 'DELETE', headers: authHeaders() })
+  await handle(res)
+}
+
 export async function fetchPostComments(postId: string): Promise<PostComment[]> {
   const res = await fetch(apiUrl(`/posts/${postId}/comments`), { headers: authHeaders() })
   const { comments } = await handle<{ comments: PostComment[] }>(res)
@@ -210,6 +242,24 @@ export async function addPostComment(
   })
   const { comment } = await handle<{ comment: PostComment }>(res)
   return comment
+}
+
+export async function updatePostComment(commentId: string, content: string): Promise<PostComment> {
+  const res = await fetch(apiUrl(`/posts/comments/${commentId}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ content }),
+  })
+  const { comment } = await handle<{ comment: PostComment }>(res)
+  return comment
+}
+
+export async function deletePostComment(commentId: string): Promise<void> {
+  const res = await fetch(apiUrl(`/posts/comments/${commentId}`), {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  await handle(res)
 }
 
 export async function togglePostCommentUpvote(

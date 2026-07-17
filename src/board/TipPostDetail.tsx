@@ -1,26 +1,43 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError } from '../api/auth'
-import { addPostComment, fetchPostComments, togglePostCommentUpvote } from '../api/posts'
+import {
+  addPostComment,
+  deletePost,
+  deletePostComment,
+  fetchPostComments,
+  togglePostCommentUpvote,
+  updatePostComment,
+} from '../api/posts'
 import type { PostComment, TipPostDetail as TipPost } from '../api/posts'
 import RankBadge from '../components/RankBadge'
 import CommentCard from './CommentCard'
-import { addReply, applyUpvoteResult, findComment, toggleUpvoteInTree } from './commentTree'
+import {
+  addReply,
+  applyUpvoteResult,
+  findComment,
+  removeCommentFromTree,
+  toggleUpvoteInTree,
+  updateCommentInTree,
+} from './commentTree'
 
 const COMMENT_MAX = 500
 
 interface TipPostDetailProps {
   post: TipPost
   onBack: () => void
+  onEdit: () => void
+  onDeleted: () => void
 }
 
-export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
+export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPostDetailProps) {
   const [comments, setComments] = useState<PostComment[]>([])
   const [loadingComments, setLoadingComments] = useState(true)
 
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const [replyTarget, setReplyTarget] = useState<string | null>(null)
   const [replyContent, setReplyContent] = useState('')
@@ -81,6 +98,18 @@ export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
     }
   }
 
+  async function handleCommentEdit(commentId: string, newContent: string) {
+    const updated = await updatePostComment(commentId, newContent)
+    setComments((prev) =>
+      updateCommentInTree(prev, commentId, { content: updated.content, updatedAt: updated.updatedAt }),
+    )
+  }
+
+  async function handleCommentDelete(commentId: string) {
+    await deletePostComment(commentId)
+    setComments((prev) => removeCommentFromTree(prev, commentId))
+  }
+
   async function handleReplySubmit(parentId: string) {
     const trimmed = replyContent.trim()
     if (!trimmed) return
@@ -98,6 +127,19 @@ export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
     }
   }
 
+  async function handleDeletePost() {
+    if (!window.confirm('게시글을 삭제하시겠어요? 댓글도 모두 함께 삭제되며 되돌릴 수 없습니다.')) return
+    setDeleting(true)
+    try {
+      await deletePost(post.id)
+      onDeleted()
+    } catch {
+      window.alert('삭제에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="post-detail">
       <button type="button" className="post-detail__back" onClick={onBack}>
@@ -105,10 +147,27 @@ export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
       </button>
 
       <div className="post-detail__header">
-        <span className="post-detail__type-badge post-detail__type-badge--tip">💡 팁</span>
+        <div className="post-detail__header-top">
+          <span className="post-detail__type-badge post-detail__type-badge--tip">💡 팁</span>
+          {post.isMine && (
+            <div className="post-detail__actions">
+              <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
+                ✏️ 수정
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--small"
+                onClick={handleDeletePost}
+                disabled={deleting}
+              >
+                🗑 삭제
+              </button>
+            </div>
+          )}
+        </div>
         <h1 className="post-detail__title">{post.title}</h1>
         <div className="post-detail__author">
-          <span className="post-detail__tag">{post.author.battletag}</span>
+          <span className="post-detail__tag">{post.author.username}</span>
           <RankBadge
             rankLabel={post.author.rankLabel}
             rankIcon={post.author.rankIcon}
@@ -118,7 +177,10 @@ export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
         </div>
       </div>
 
-      <p className="post-detail__body">{post.body}</p>
+      <p className="post-detail__body">
+        {post.body}
+        {post.updatedAt && <span className="post-detail__edited">(수정됨)</span>}
+      </p>
 
       <div className="comment-feed">
         <div className="comment-feed__header">
@@ -156,6 +218,8 @@ export default function TipPostDetail({ post, onBack }: TipPostDetailProps) {
               variant="plain"
               isActive={false}
               onUpvote={handleUpvote}
+              onEdit={handleCommentEdit}
+              onDelete={handleCommentDelete}
               replyOpen={replyTarget === c.id}
               replyContent={replyTarget === c.id ? replyContent : ''}
               onReplyToggle={(id) => {

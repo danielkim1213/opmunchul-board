@@ -1,22 +1,38 @@
 import { useState } from 'react'
 import { ApiError } from '../api/auth'
-import { votePoll } from '../api/posts'
+import { deletePost, votePoll } from '../api/posts'
 import type { PollOption, PollPostDetail as PollPost } from '../api/posts'
 import RankBadge from '../components/RankBadge'
 
 interface PollPostDetailProps {
   post: PollPost
   onBack: () => void
+  onEdit: () => void
+  onDeleted: () => void
 }
 
-export default function PollPostDetail({ post, onBack }: PollPostDetailProps) {
+export default function PollPostDetail({ post, onBack, onEdit, onDeleted }: PollPostDetailProps) {
   const [options, setOptions] = useState<PollOption[]>(post.options)
   const [totalVotes, setTotalVotes] = useState(post.totalVotes)
   const [myOptionId, setMyOptionId] = useState<string | null>(post.myOptionId)
   const [voting, setVoting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const canInteract = post.viewerEligible
+
+  async function handleDeletePost() {
+    if (!window.confirm('투표를 삭제하시겠어요? 되돌릴 수 없습니다.')) return
+    setDeleting(true)
+    try {
+      await deletePost(post.id)
+      onDeleted()
+    } catch {
+      window.alert('삭제에 실패했습니다. 다시 시도해 주세요.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   async function handleVote(optionId: string) {
     if (!canInteract || voting || optionId === myOptionId) return
@@ -47,10 +63,27 @@ export default function PollPostDetail({ post, onBack }: PollPostDetailProps) {
       </button>
 
       <div className="post-detail__header">
-        <span className="post-detail__type-badge post-detail__type-badge--poll">🗳 투표</span>
+        <div className="post-detail__header-top">
+          <span className="post-detail__type-badge post-detail__type-badge--poll">🗳 투표</span>
+          {post.isMine && (
+            <div className="post-detail__actions">
+              <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
+                ✏️ 수정
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost btn--small"
+                onClick={handleDeletePost}
+                disabled={deleting}
+              >
+                🗑 삭제
+              </button>
+            </div>
+          )}
+        </div>
         <h1 className="post-detail__title">{post.title}</h1>
         <div className="post-detail__author">
-          <span className="post-detail__tag">{post.author.battletag}</span>
+          <span className="post-detail__tag">{post.author.username}</span>
           <RankBadge
             rankLabel={post.author.rankLabel}
             rankIcon={post.author.rankIcon}

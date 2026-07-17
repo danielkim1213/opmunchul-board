@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError } from '../api/auth'
-import { createPost } from '../api/posts'
+import { createPost, updatePost } from '../api/posts'
 import type { CreatePostInput, PostDetail, PostType, TeamSide, TierKey } from '../api/posts'
 import { extractYoutubeId } from './time'
 import TierCheckboxes from './TierCheckboxes'
@@ -20,11 +20,11 @@ const TYPE_OPTIONS: { key: PostType; emoji: string; label: string }[] = [
 
 const ERROR_MESSAGES: Record<string, string> = {
   UNAUTHENTICATED: '로그인이 필요합니다.',
+  FORBIDDEN: '본인 글만 수정할 수 있습니다.',
   EMPTY_TITLE: '제목을 입력해 주세요.',
   TITLE_TOO_LONG: `제목은 ${TITLE_MAX}자 이내로 작성해 주세요.`,
   EMPTY_BODY: '내용을 입력해 주세요.',
   BODY_TOO_LONG: '내용이 너무 길어요.',
-  EMPTY_REPLAY_CODE: '리플레이 코드를 입력해 주세요.',
   EMPTY_HERO: '영웅을 입력해 주세요.',
   INVALID_YOUTUBE_URL: '올바른 YouTube 링크를 입력해 주세요.',
   INVALID_OPTION_COUNT: '선택지는 2~5개까지 입력할 수 있습니다.',
@@ -32,24 +32,39 @@ const ERROR_MESSAGES: Record<string, string> = {
 }
 
 interface PostCreateFormProps {
+  /** When provided, the form edits this existing post instead of creating a new one. */
+  editingPost?: PostDetail
   onCreated: (post: PostDetail) => void
   onCancel: () => void
 }
 
-export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormProps) {
-  const [type, setType] = useState<PostType>('tip')
-  const [title, setTitle] = useState('')
-  const [body, setBody] = useState('')
-  const [replayCode, setReplayCode] = useState('')
-  const [hero, setHero] = useState('')
-  const [teamSide, setTeamSide] = useState<TeamSide>('attack')
-  const [youtubeUrl, setYoutubeUrl] = useState('')
-  const [options, setOptions] = useState<string[]>(['', ''])
-  const [allowedTiers, setAllowedTiers] = useState<TierKey[]>([])
+export default function PostCreateForm({ editingPost, onCreated, onCancel }: PostCreateFormProps) {
+  const isEditing = Boolean(editingPost)
+  const [selectableType, setSelectableType] = useState<PostType>(editingPost?.type ?? 'tip')
+  const activeType = isEditing ? (editingPost?.type ?? 'tip') : selectableType
+
+  const [title, setTitle] = useState(editingPost?.title ?? '')
+  const [body, setBody] = useState(
+    editingPost?.type === 'tip' || editingPost?.type === 'feedback' ? editingPost.body : '',
+  )
+  const [replayCode, setReplayCode] = useState(
+    editingPost?.type === 'feedback' ? editingPost.replayCode ?? '' : '',
+  )
+  const [hero, setHero] = useState(editingPost?.type === 'feedback' ? editingPost.hero : '')
+  const [teamSide, setTeamSide] = useState<TeamSide>(
+    editingPost?.type === 'feedback' ? editingPost.teamSide : 'red',
+  )
+  const [youtubeUrl, setYoutubeUrl] = useState(
+    editingPost?.type === 'feedback' ? `https://youtu.be/${editingPost.youtubeId}` : '',
+  )
+  const [options, setOptions] = useState<string[]>(
+    editingPost?.type === 'poll' ? editingPost.options.map((o) => o.label) : ['', ''],
+  )
+  const [allowedTiers, setAllowedTiers] = useState<TierKey[]>(editingPost?.allowedTiers ?? [])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const bodyMax = type === 'tip' ? TIP_BODY_MAX : FEEDBACK_NOTE_MAX
+  const bodyMax = activeType === 'tip' ? TIP_BODY_MAX : FEEDBACK_NOTE_MAX
 
   function updateOption(index: number, value: string) {
     setOptions((prev) => prev.map((o, i) => (i === index ? value.slice(0, POLL_OPTION_MAX) : o)))
@@ -75,63 +90,107 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
       return
     }
 
-    let input: CreatePostInput
-    if (type === 'tip') {
-      const trimmedBody = body.trim()
-      if (!trimmedBody) {
-        setError('내용을 입력해 주세요.')
-        return
-      }
-      input = { type: 'tip', title: trimmedTitle, body: trimmedBody }
-    } else if (type === 'feedback') {
-      const trimmedBody = body.trim()
-      const trimmedReplayCode = replayCode.trim()
-      const trimmedHero = hero.trim()
-      const trimmedUrl = youtubeUrl.trim()
-      if (!trimmedReplayCode) {
-        setError('리플레이 코드를 입력해 주세요.')
-        return
-      }
-      if (!trimmedHero) {
-        setError('영웅을 입력해 주세요.')
-        return
-      }
-      if (!extractYoutubeId(trimmedUrl)) {
-        setError('올바른 YouTube 링크를 입력해 주세요.')
-        return
-      }
-      if (!trimmedBody) {
-        setError('요청 노트를 입력해 주세요.')
-        return
-      }
-      input = {
-        type: 'feedback',
-        title: trimmedTitle,
-        body: trimmedBody,
-        replayCode: trimmedReplayCode,
-        hero: trimmedHero,
-        teamSide,
-        youtubeUrl: trimmedUrl,
-        allowedTiers,
-      }
-    } else {
-      const trimmedOptions = options.map((o) => o.trim()).filter(Boolean)
-      if (trimmedOptions.length < 2) {
-        setError('선택지를 2개 이상 입력해 주세요.')
-        return
-      }
-      input = { type: 'poll', title: trimmedTitle, options: trimmedOptions, allowedTiers }
-    }
-
     setSubmitting(true)
     try {
-      const post = await createPost(input)
+      let post: PostDetail
+      if (isEditing && editingPost) {
+        if (activeType === 'tip') {
+          const trimmedBody = body.trim()
+          if (!trimmedBody) {
+            setError('내용을 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          post = await updatePost(editingPost.id, { title: trimmedTitle, body: trimmedBody })
+        } else if (activeType === 'feedback') {
+          const trimmedBody = body.trim()
+          const trimmedHero = hero.trim()
+          const trimmedUrl = youtubeUrl.trim()
+          if (!trimmedHero) {
+            setError('영웅을 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          if (!extractYoutubeId(trimmedUrl)) {
+            setError('올바른 YouTube 링크를 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          if (!trimmedBody) {
+            setError('요청 노트를 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          post = await updatePost(editingPost.id, {
+            title: trimmedTitle,
+            body: trimmedBody,
+            replayCode: replayCode.trim() || null,
+            hero: trimmedHero,
+            teamSide,
+            youtubeUrl: trimmedUrl,
+            allowedTiers,
+          })
+        } else {
+          // poll: options aren't editable, only title/tiers.
+          post = await updatePost(editingPost.id, { title: trimmedTitle, allowedTiers })
+        }
+      } else {
+        let input: CreatePostInput
+        if (activeType === 'tip') {
+          const trimmedBody = body.trim()
+          if (!trimmedBody) {
+            setError('내용을 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          input = { type: 'tip', title: trimmedTitle, body: trimmedBody }
+        } else if (activeType === 'feedback') {
+          const trimmedBody = body.trim()
+          const trimmedReplayCode = replayCode.trim()
+          const trimmedHero = hero.trim()
+          const trimmedUrl = youtubeUrl.trim()
+          if (!trimmedHero) {
+            setError('영웅을 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          if (!extractYoutubeId(trimmedUrl)) {
+            setError('올바른 YouTube 링크를 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          if (!trimmedBody) {
+            setError('요청 노트를 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          input = {
+            type: 'feedback',
+            title: trimmedTitle,
+            body: trimmedBody,
+            replayCode: trimmedReplayCode || undefined,
+            hero: trimmedHero,
+            teamSide,
+            youtubeUrl: trimmedUrl,
+            allowedTiers,
+          }
+        } else {
+          const trimmedOptions = options.map((o) => o.trim()).filter(Boolean)
+          if (trimmedOptions.length < 2) {
+            setError('선택지를 2개 이상 입력해 주세요.')
+            setSubmitting(false)
+            return
+          }
+          input = { type: 'poll', title: trimmedTitle, options: trimmedOptions, allowedTiers }
+        }
+        post = await createPost(input)
+      }
       onCreated(post)
     } catch (err) {
       setError(
         err instanceof ApiError
-          ? ERROR_MESSAGES[err.code] ?? '게시글 작성에 실패했습니다. 다시 시도해 주세요.'
-          : '게시글 작성에 실패했습니다. 다시 시도해 주세요.',
+          ? ERROR_MESSAGES[err.code] ?? '게시글 저장에 실패했습니다. 다시 시도해 주세요.'
+          : '게시글 저장에 실패했습니다. 다시 시도해 주세요.',
       )
     } finally {
       setSubmitting(false)
@@ -141,23 +200,25 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
   return (
     <div className="post-create">
       <button type="button" className="post-detail__back" onClick={onCancel}>
-        ← 목록으로
+        ← {isEditing ? '뒤로' : '목록으로'}
       </button>
 
-      <h1 className="post-create__title">새 글쓰기</h1>
+      <h1 className="post-create__title">{isEditing ? '글 수정' : '새 글쓰기'}</h1>
 
-      <div className="post-create__type-select">
-        {TYPE_OPTIONS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={`chip${type === t.key ? ' chip--active' : ''}`}
-            onClick={() => setType(t.key)}
-          >
-            {t.emoji} {t.label}
-          </button>
-        ))}
-      </div>
+      {!isEditing && (
+        <div className="post-create__type-select">
+          {TYPE_OPTIONS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              className={`chip${selectableType === t.key ? ' chip--active' : ''}`}
+              onClick={() => setSelectableType(t.key)}
+            >
+              {t.emoji} {t.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="post-create__form">
         <div className="field">
@@ -170,7 +231,7 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
           />
         </div>
 
-        {type === 'tip' && (
+        {activeType === 'tip' && (
           <div className="field">
             <span className="field__label">내용</span>
             <textarea
@@ -186,11 +247,11 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
           </div>
         )}
 
-        {type === 'feedback' && (
+        {activeType === 'feedback' && (
           <>
             <div className="post-create__row">
               <div className="field">
-                <span className="field__label">리플레이 코드</span>
+                <span className="field__label">리플레이 코드 (선택)</span>
                 <input
                   className="field__input"
                   value={replayCode}
@@ -214,8 +275,8 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
                   value={teamSide}
                   onChange={(e) => setTeamSide(e.target.value as TeamSide)}
                 >
-                  <option value="attack">공격</option>
-                  <option value="defense">방어</option>
+                  <option value="red">레드팀</option>
+                  <option value="blue">블루팀</option>
                 </select>
               </div>
             </div>
@@ -251,10 +312,10 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
           </>
         )}
 
-        {type === 'poll' && (
+        {activeType === 'poll' && (
           <>
             <div className="field">
-              <span className="field__label">선택지 (2~5개)</span>
+              <span className="field__label">선택지 (2~5개){isEditing && ' — 수정 불가'}</span>
               <div className="post-create__options">
                 {options.map((option, index) => (
                   <div key={index} className="post-create__option-row">
@@ -263,8 +324,9 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
                       value={option}
                       onChange={(e) => updateOption(index, e.target.value)}
                       placeholder={`선택지 ${index + 1}`}
+                      disabled={isEditing}
                     />
-                    {options.length > 2 && (
+                    {!isEditing && options.length > 2 && (
                       <button
                         type="button"
                         className="btn btn--ghost btn--small"
@@ -276,10 +338,13 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
                   </div>
                 ))}
               </div>
-              {options.length < POLL_MAX_OPTIONS && (
+              {!isEditing && options.length < POLL_MAX_OPTIONS && (
                 <button type="button" className="btn btn--ghost btn--small" onClick={addOption}>
                   + 선택지 추가
                 </button>
+              )}
+              {isEditing && (
+                <span className="field__hint">투표가 시작된 뒤라 선택지는 수정할 수 없습니다.</span>
               )}
             </div>
 
@@ -297,7 +362,7 @@ export default function PostCreateForm({ onCreated, onCancel }: PostCreateFormPr
             취소
           </button>
           <button type="submit" className="btn btn--primary" disabled={submitting}>
-            {submitting ? '등록 중...' : '게시하기'}
+            {submitting ? '저장 중...' : isEditing ? '수정하기' : '게시하기'}
           </button>
         </div>
       </form>

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchPosts } from '../api/posts'
-import type { PostSummary, PostType } from '../api/posts'
+import type { PostDetail as PostDetailData, PostSummary, PostType } from '../api/posts'
 import BoardList from './BoardList'
 import PostCreateForm from './PostCreateForm'
 import PostDetail from './PostDetail'
 import './Board.css'
 
 type Filter = PostType | 'all'
-type View = { name: 'list' } | { name: 'detail'; postId: string } | { name: 'create' }
+type View =
+  | { name: 'list' }
+  | { name: 'detail'; postId: string }
+  | { name: 'create' }
+  | { name: 'edit'; post: PostDetailData }
 
 export default function Board() {
   const [view, setView] = useState<View>({ name: 'list' })
@@ -30,7 +34,14 @@ export default function Board() {
   }, [view.name, filter, loadPosts])
 
   if (view.name === 'detail') {
-    return <PostDetail postId={view.postId} onBack={() => setView({ name: 'list' })} />
+    return (
+      <PostDetail
+        postId={view.postId}
+        onBack={() => setView({ name: 'list' })}
+        onEdit={(post) => setView({ name: 'edit', post })}
+        onDeleted={() => setView({ name: 'list' })}
+      />
+    )
   }
 
   if (view.name === 'create') {
@@ -38,6 +49,16 @@ export default function Board() {
       <PostCreateForm
         onCreated={(post) => setView({ name: 'detail', postId: post.id })}
         onCancel={() => setView({ name: 'list' })}
+      />
+    )
+  }
+
+  if (view.name === 'edit') {
+    return (
+      <PostCreateForm
+        editingPost={view.post}
+        onCreated={(post) => setView({ name: 'detail', postId: post.id })}
+        onCancel={() => setView({ name: 'detail', postId: view.post.id })}
       />
     )
   }

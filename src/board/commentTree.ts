@@ -46,3 +46,24 @@ export function addReply(
 ): PostComment[] {
   return comments.map((c) => (c.id === parentId ? { ...c, replies: [...c.replies, reply] } : c))
 }
+
+export function updateCommentInTree(
+  comments: PostComment[],
+  id: string,
+  patch: Partial<PostComment>,
+): PostComment[] {
+  return comments.map((c) => {
+    if (c.id === id) return { ...c, ...patch }
+    if (c.replies.some((r) => r.id === id)) {
+      return { ...c, replies: updateCommentInTree(c.replies, id, patch) }
+    }
+    return c
+  })
+}
+
+/** Removing a top-level comment also drops its replies (server cascades the same way). */
+export function removeCommentFromTree(comments: PostComment[], id: string): PostComment[] {
+  return comments
+    .filter((c) => c.id !== id)
+    .map((c) => (c.replies.some((r) => r.id === id) ? { ...c, replies: c.replies.filter((r) => r.id !== id) } : c))
+}
