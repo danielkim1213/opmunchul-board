@@ -10,20 +10,21 @@ interface CommentCardProps {
   comment: PostComment
   /** 'plain' (tip posts) hides the timestamp/global badge entirely. */
   variant: 'plain' | 'feedback'
-  isActive: boolean
+  /** Nesting level — 0 for top-level comments, increments per reply level. */
+  depth?: number
   currentTime?: number
-  isReply?: boolean
   onSeek?: (seconds: number) => void
   onUpvote: (id: string) => void
   onEdit: (id: string, content: string) => void | Promise<void>
   onDelete: (id: string) => void | Promise<void>
-  replyOpen: boolean
+  /** Id of the comment whose reply box is currently open (shared across the tree). */
+  replyTargetId: string | null
   replyContent: string
   onReplyToggle: (id: string | null) => void
   onReplyChange: (value: string) => void
-  onReplySubmit: () => void
+  onReplySubmit: (parentId: string) => void
   replySubmitting: boolean
-  registerRef: (el: HTMLLIElement | null) => void
+  registerRef: (id: string, el: HTMLLIElement | null) => void
   /** False when the viewer doesn't meet the post's tier requirement — locks upvote/reply. */
   canInteract?: boolean
 }
@@ -31,14 +32,13 @@ interface CommentCardProps {
 export default function CommentCard({
   comment,
   variant,
-  isActive,
+  depth = 0,
   currentTime = 0,
-  isReply = false,
   onSeek,
   onUpvote,
   onEdit,
   onDelete,
-  replyOpen,
+  replyTargetId,
   replyContent,
   onReplyToggle,
   onReplyChange,
@@ -48,6 +48,13 @@ export default function CommentCard({
   canInteract = true,
 }: CommentCardProps) {
   const isGlobal = comment.timestampSeconds === null
+  const isReply = depth > 0
+  const replyOpen = replyTargetId === comment.id
+  const isActive =
+    variant === 'feedback' &&
+    comment.timestampSeconds !== null &&
+    Math.abs(comment.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
+
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(comment.content)
   const [editSubmitting, setEditSubmitting] = useState(false)
@@ -64,20 +71,25 @@ export default function CommentCard({
     try {
       await onEdit(comment.id, trimmed)
       setIsEditing(false)
+    } catch {
+      window.alert('댓글 수정에 실패했습니다. 다시 시도해 주세요.')
     } finally {
       setEditSubmitting(false)
     }
   }
 
-  function handleDelete() {
-    if (window.confirm('댓글을 삭제하시겠어요? 답글도 함께 삭제됩니다.')) {
-      onDelete(comment.id)
+  async function handleDelete() {
+    if (!window.confirm('댓글을 삭제하시겠어요? 답글도 함께 삭제됩니다.')) return
+    try {
+      await onDelete(comment.id)
+    } catch {
+      window.alert('댓글 삭제에 실패했습니다. 다시 시도해 주세요.')
     }
   }
 
   return (
     <li
-      ref={registerRef}
+      ref={(el) => registerRef(comment.id, el)}
       className={`comment-card${isActive ? ' comment-card--active' : ''}${
         isReply ? ' comment-card--reply' : ''
       }`}
@@ -155,17 +167,15 @@ export default function CommentCard({
         >
           👍 따봉{comment.upvotes > 0 ? ` ${comment.upvotes}` : ''}
         </button>
-        {!isReply && (
-          <button
-            type="button"
-            className="action-btn"
-            onClick={() => onReplyToggle(replyOpen ? null : comment.id)}
-            disabled={!canInteract}
-            title={canInteract ? undefined : '자격 티어가 아닙니다'}
-          >
-            💬 답글{comment.replies.length > 0 ? ` ${comment.replies.length}` : ''}
-          </button>
-        )}
+        <button
+          type="button"
+          className="action-btn"
+          onClick={() => onReplyToggle(replyOpen ? null : comment.id)}
+          disabled={!canInteract}
+          title={canInteract ? undefined : '자격 티어가 아닙니다'}
+        >
+          💬 답글{comment.replies.length > 0 ? ` ${comment.replies.length}` : ''}
+        </button>
         {comment.isMine && !isEditing && (
           <>
             <button type="button" className="action-btn" onClick={startEdit}>
@@ -178,11 +188,11 @@ export default function CommentCard({
         )}
       </div>
 
-      {replyOpen && !isReply && canInteract && (
+      {replyOpen && canInteract && (
         <div className="reply-form">
           <textarea
             value={replyContent}
-            onChange={(e) => onReplyChange(e.target.value.slice(0, 500))}
+            onChange={(e) => onReplyChange(e.target.value.slice(0, COMMENT_MAX))}
             placeholder="답글을 입력하세요."
             rows={2}
             autoFocus
@@ -191,7 +201,7 @@ export default function CommentCard({
             type="button"
             className="btn btn--primary btn--small"
             disabled={replySubmitting || !replyContent.trim()}
-            onClick={onReplySubmit}
+            onClick={() => onReplySubmit(comment.id)}
           >
             {replySubmitting ? '등록 중...' : '답글 등록'}
           </button>
@@ -205,23 +215,19 @@ export default function CommentCard({
               key={reply.id}
               comment={reply}
               variant={variant}
-              isActive={
-                reply.timestampSeconds !== null &&
-                Math.abs(reply.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
-              }
+              depth={depth + 1}
               currentTime={currentTime}
-              isReply
               onSeek={onSeek}
               onUpvote={onUpvote}
               onEdit={onEdit}
               onDelete={onDelete}
-              replyOpen={false}
-              replyContent=""
-              onReplyToggle={() => {}}
-              onReplyChange={() => {}}
-              onReplySubmit={() => {}}
-              replySubmitting={false}
-              registerRef={() => {}}
+              replyTargetId={replyTargetId}
+              replyContent={replyContent}
+              onReplyToggle={onReplyToggle}
+              onReplyChange={onReplyChange}
+              onReplySubmit={onReplySubmit}
+              replySubmitting={replySubmitting}
+              registerRef={registerRef}
               canInteract={canInteract}
             />
           ))}

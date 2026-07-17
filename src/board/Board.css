@@ -1048,6 +1048,12 @@
   gap: 8px;
 }
 
+/* Replies can nest indefinitely — tighten the indent from the 3rd level so
+   deep threads don't run off the edge on narrow screens. */
+.comment-card__replies .comment-card__replies .comment-card__replies {
+  padding-left: 8px;
+}
+
 /* ================= Mobile ================= */
 @media (max-width: 640px) {
   .post-detail,

@@ -37,8 +37,45 @@ const PUBLIC_DIR =
   )
 
 const app = express()
+// Deployed behind a reverse proxy (Railway) — needed so req.ip reflects the
+// real client for per-IP rate limiting instead of the proxy's address.
+app.set('trust proxy', 1)
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: false }))
 app.use(express.json())
+
+/** Express 4 doesn't forward rejected promises from async handlers to the
+ * error middleware — without this wrapper a thrown error leaves the request
+ * hanging forever instead of returning a 500. */
+const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
+
+/* ------------------------------------------------------------------ *
+ * Simple fixed-window rate limiter for credential endpoints
+ * (bcrypt endpoints are also CPU-expensive, so this doubles as DoS relief).
+ * ------------------------------------------------------------------ */
+const rateBuckets = new Map()
+function rateLimit(bucket, limit, windowMs) {
+  return (req, res, next) => {
+    const key = `${bucket}:${req.ip}`
+    const now = Date.now()
+    let entry = rateBuckets.get(key)
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs }
+      rateBuckets.set(key, entry)
+    }
+    entry.count += 1
+    if (entry.count > limit) {
+      return res.status(429).json({ error: 'RATE_LIMITED' })
+    }
+    return next()
+  }
+}
+// Keep the bucket map from growing unbounded.
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, entry] of rateBuckets) {
+    if (entry.resetAt <= now) rateBuckets.delete(key)
+  }
+}, 60_000).unref()
 
 // username: 3–16 chars, Korean/latin letters, digits, underscore.
 const USERNAME_RE = /^[A-Za-z0-9가-힣_]{3,16}$/
@@ -99,6 +136,7 @@ const insertSession = db.prepare(`
 `)
 const findSession = db.prepare('SELECT * FROM sessions WHERE token = ?')
 const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?')
+const deleteExpiredSessions = db.prepare('DELETE FROM sessions WHERE expires_at < ?')
 
 const insertLink = db.prepare(`
   INSERT INTO oauth_links (state, status, created_at, expires_at)
@@ -151,6 +189,9 @@ function toPublicUser(row) {
 function createSession(usernameKey) {
   const token = randomBytes(32).toString('hex')
   const now = Date.now()
+  // Opportunistic cleanup — expired sessions are otherwise only removed
+  // when their own token is presented, so dead rows would pile up forever.
+  deleteExpiredSessions.run(now)
   insertSession.run(token, usernameKey, now, now + SESSION_TTL_MS)
   return token
 }
@@ -194,7 +235,7 @@ async function ensureDailyRank(user) {
 /* ------------------------------------------------------------------ *
  * Username availability
  * ------------------------------------------------------------------ */
-app.post('/api/auth/check-username', (req, res) => {
+app.post('/api/auth/check-username', rateLimit('check-username', 30, 60_000), (req, res) => {
   const username = String(req.body?.username ?? '').trim()
   if (!isValidUsername(username)) {
     return res
@@ -224,7 +265,20 @@ app.get('/api/auth/blizzard/start', (req, res) => {
   return res.json({ state, authorizeUrl })
 })
 
-function renderPopupPage(title, message) {
+/** Escapes text interpolated into the OAuth popup HTML (e.g. the BattleTag,
+ * which comes from an external API and must not be trusted as markup). */
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function renderPopupPage(rawTitle, rawMessage) {
+  const title = escapeHtml(rawTitle)
+  const message = escapeHtml(rawMessage)
   return `<!doctype html>
 <html lang="ko"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -247,7 +301,7 @@ function renderPopupPage(title, message) {
 </body></html>`
 }
 
-app.get('/api/auth/blizzard/callback', async (req, res) => {
+app.get('/api/auth/blizzard/callback', asyncRoute(async (req, res) => {
   const state = String(req.query.state ?? '')
   const code = String(req.query.code ?? '')
   const link = findLink.get(state)
@@ -316,7 +370,7 @@ app.get('/api/auth/blizzard/callback', async (req, res) => {
       .status(502)
       .send(renderPopupPage('연동 실패', 'Blizzard 인증 중 문제가 발생했어요. 다시 시도해 주세요.'))
   }
-})
+}))
 
 app.get('/api/auth/blizzard/poll', (req, res) => {
   const state = String(req.query.state ?? '')
@@ -343,7 +397,7 @@ app.get('/api/auth/blizzard/poll', (req, res) => {
  * Lets an existing account correct/change which BattleTag it's tied to,
  * without going through registration again.
  */
-app.post('/api/auth/blizzard/apply', async (req, res) => {
+app.post('/api/auth/blizzard/apply', asyncRoute(async (req, res) => {
   const auth = authenticate(req)
   if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
@@ -383,12 +437,12 @@ app.post('/api/auth/blizzard/apply', async (req, res) => {
 
   const row = findUser.get(auth.user.username_key)
   return res.json({ user: toPublicUser(row) })
-})
+}))
 
 /* ------------------------------------------------------------------ *
  * Register / Login
  * ------------------------------------------------------------------ */
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', rateLimit('register', 10, 60_000), asyncRoute(async (req, res) => {
   const username = String(req.body?.username ?? '').trim()
   const password = String(req.body?.password ?? '')
   const state = String(req.body?.state ?? '')
@@ -425,39 +479,55 @@ app.post('/api/auth/register', async (req, res) => {
 
   const now = Date.now()
   const password_hash = await bcrypt.hash(password, BCRYPT_ROUNDS)
-  insertUser.run(
-    usernameKey,
-    username,
-    password_hash,
-    link.battletag,
-    link.battletag_key,
-    link.blizzard_id ?? null,
-    profile.rankLabel ?? 'Unranked',
-    profile.rankIcon ?? null,
-    profile.rankRole ?? null,
-    JSON.stringify(profile.mostHeroes ?? []),
-    profile.avatar ?? null,
-    now,
-    now,
-  )
+  try {
+    insertUser.run(
+      usernameKey,
+      username,
+      password_hash,
+      link.battletag,
+      link.battletag_key,
+      link.blizzard_id ?? null,
+      profile.rankLabel ?? 'Unranked',
+      profile.rankIcon ?? null,
+      profile.rankRole ?? null,
+      JSON.stringify(profile.mostHeroes ?? []),
+      profile.avatar ?? null,
+      now,
+      now,
+    )
+  } catch (err) {
+    // The pre-insert checks above race with concurrent registrations; the
+    // UNIQUE constraints are the real gate, so map them to a clean 409.
+    const message = String(err?.message ?? '')
+    if (message.includes('UNIQUE')) {
+      return res
+        .status(409)
+        .json({ error: message.includes('battletag_key') ? 'BATTLETAG_TAKEN' : 'USERNAME_TAKEN' })
+    }
+    throw err
+  }
   consumeLink.run(state)
 
   const row = findUser.get(usernameKey)
   const token = createSession(usernameKey)
   return res.status(201).json({ token, user: toPublicUser(row) })
-})
+}))
 
-app.post('/api/auth/login', async (req, res) => {
+// A fixed hash to compare against when the username doesn't exist, so the
+// response takes the same time either way (prevents timing-based
+// username enumeration).
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('dummy-password-for-timing', BCRYPT_ROUNDS)
+
+app.post('/api/auth/login', rateLimit('login', 10, 60_000), asyncRoute(async (req, res) => {
   const username = String(req.body?.username ?? '').trim()
   const password = String(req.body?.password ?? '')
 
   let user = findUser.get(normalizeUsername(username))
-  if (!user) {
-    return res.status(404).json({ error: 'NOT_FOUND' })
-  }
-  const ok = await bcrypt.compare(password, user.password_hash)
-  if (!ok) {
-    return res.status(401).json({ error: 'BAD_PASSWORD' })
+  const ok = await bcrypt.compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH)
+  if (!user || !ok) {
+    // Deliberately identical for "no such user" and "wrong password" —
+    // distinct codes let attackers enumerate registered usernames.
+    return res.status(401).json({ error: 'INVALID_CREDENTIALS' })
   }
 
   try {
@@ -468,9 +538,9 @@ app.post('/api/auth/login', async (req, res) => {
 
   const token = createSession(user.username_key)
   return res.json({ token, user: toPublicUser(user) })
-})
+}))
 
-app.get('/api/auth/me', async (req, res) => {
+app.get('/api/auth/me', asyncRoute(async (req, res) => {
   const auth = authenticate(req)
   if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
@@ -481,7 +551,7 @@ app.get('/api/auth/me', async (req, res) => {
     console.warn('Daily rank refresh skipped:', err.message ?? err)
   }
   return res.json({ user: toPublicUser(user) })
-})
+}))
 
 app.post('/api/auth/logout', (req, res) => {
   const auth = authenticate(req)
@@ -515,6 +585,18 @@ if (PUBLIC_DIR) {
     })
   })
 }
+
+// Final error handler — returns JSON instead of Express's default HTML page
+// (covers body-parser failures and anything thrown/rejected in routes).
+// The 4-arg signature is required for Express to treat it as an error handler.
+app.use((err, req, res, _next) => {
+  if (err?.type === 'entity.parse.failed' || err?.type === 'entity.too.large') {
+    return res.status(400).json({ error: 'INVALID_BODY' })
+  }
+  console.error('Unhandled route error:', err)
+  if (res.headersSent) return
+  return res.status(500).json({ error: 'INTERNAL_ERROR' })
+})
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`옵문철 게시판 auth server listening on http://${HOST}:${PORT}`)

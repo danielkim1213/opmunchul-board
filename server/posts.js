@@ -74,14 +74,16 @@ const countComments = db.prepare('SELECT COUNT(*) AS n FROM post_comments WHERE 
 const insertOption = db.prepare(`
   INSERT INTO post_poll_options (id, post_id, label, order_index) VALUES (?, ?, ?, ?)
 `)
-const listOptions = db.prepare(
-  'SELECT * FROM post_poll_options WHERE post_id = ? ORDER BY order_index ASC',
-)
+// One aggregated query per poll instead of a COUNT per option (N+1).
+const listOptionsWithVotes = db.prepare(`
+  SELECT o.id, o.label, COUNT(v.username_key) AS votes
+  FROM post_poll_options o
+  LEFT JOIN post_poll_votes v ON v.option_id = o.id
+  WHERE o.post_id = ?
+  GROUP BY o.id
+  ORDER BY o.order_index ASC
+`)
 const findOption = db.prepare('SELECT * FROM post_poll_options WHERE id = ?')
-const countVotesForOption = db.prepare(
-  'SELECT COUNT(*) AS n FROM post_poll_votes WHERE option_id = ?',
-)
-const countVotesForPost = db.prepare('SELECT COUNT(*) AS n FROM post_poll_votes WHERE post_id = ?')
 const findMyVote = db.prepare(
   'SELECT option_id FROM post_poll_votes WHERE post_id = ? AND username_key = ?',
 )
@@ -100,8 +102,16 @@ const insertComment = db.prepare(`
 const updateCommentRow = db.prepare('UPDATE post_comments SET content = ?, updated_at = ? WHERE id = ?')
 const deleteCommentRow = db.prepare('DELETE FROM post_comments WHERE id = ?')
 const findComment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
+// Upvote count and the viewer's own upvote are folded into the listing query
+// so rendering a thread costs one query instead of 2 per comment (N+1).
 const listComments = db.prepare(`
-  SELECT c.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT
+    c.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    (SELECT COUNT(*) FROM post_comment_upvotes v WHERE v.comment_id = c.id) AS upvote_count,
+    EXISTS(
+      SELECT 1 FROM post_comment_upvotes v
+      WHERE v.comment_id = c.id AND v.username_key = ?
+    ) AS upvoted_by_me
   FROM post_comments c
   JOIN users u ON u.username_key = c.username_key
   WHERE c.post_id = ?
@@ -149,12 +159,12 @@ function toPublicAuthor(row) {
 }
 
 function pollSummary(postId, viewerKey) {
-  const options = listOptions.all(postId).map((o) => ({
+  const options = listOptionsWithVotes.all(postId).map((o) => ({
     id: o.id,
     label: o.label,
-    votes: countVotesForOption.get(o.id).n,
+    votes: o.votes,
   }))
-  const totalVotes = countVotesForPost.get(postId).n
+  const totalVotes = options.reduce((sum, o) => sum + o.votes, 0)
   const myVote = viewerKey ? findMyVote.get(postId, viewerKey) : null
   return { options, totalVotes, myOptionId: myVote?.option_id ?? null }
 }
@@ -220,8 +230,15 @@ function toPublicComment(row, viewerKey) {
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
     author: toPublicAuthor(row),
-    upvotes: countUpvotes.get(row.id).n,
-    upvotedByMe: viewerKey ? Boolean(hasUpvoted.get(row.id, viewerKey)) : false,
+    // Rows from `listComments` carry aggregated fields; rows loaded via
+    // `findComment` (create/edit responses) fall back to point queries.
+    upvotes: row.upvote_count ?? countUpvotes.get(row.id).n,
+    upvotedByMe:
+      row.upvoted_by_me !== undefined
+        ? Boolean(row.upvoted_by_me)
+        : viewerKey
+          ? Boolean(hasUpvoted.get(row.id, viewerKey))
+          : false,
     isMine: viewerKey ? row.username_key === viewerKey : false,
   }
 }
@@ -315,22 +332,31 @@ export function registerPostRoutes(app, { authenticate }) {
         return res.status(400).json({ error: 'OPTION_TOO_LONG' })
       }
 
-      insertPost.run(
-        id,
-        type,
-        title,
-        null,
-        auth.user.username_key,
-        JSON.stringify(allowedTiers),
-        null,
-        null,
-        null,
-        null,
-        createdAt,
-      )
-      options.forEach((label, index) => {
-        insertOption.run(randomUUID(), id, label, index)
-      })
+      // Post + options must land together — a failure halfway through would
+      // otherwise leave a poll with no (or missing) options.
+      db.exec('BEGIN')
+      try {
+        insertPost.run(
+          id,
+          type,
+          title,
+          null,
+          auth.user.username_key,
+          JSON.stringify(allowedTiers),
+          null,
+          null,
+          null,
+          null,
+          createdAt,
+        )
+        options.forEach((label, index) => {
+          insertOption.run(randomUUID(), id, label, index)
+        })
+        db.exec('COMMIT')
+      } catch (err) {
+        db.exec('ROLLBACK')
+        throw err
+      }
     }
 
     const row = findPostWithAuthor.get(id)
@@ -430,9 +456,11 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const auth = authenticate(req)
     const viewerKey = auth?.user.username_key ?? null
-    const rows = listComments.all(post.id)
+    const rows = listComments.all(viewerKey, post.id)
     const flat = rows.map((r) => ({ ...toPublicComment(r, viewerKey), replies: [] }))
 
+    // Builds the reply tree at arbitrary depth in one pass (rows are in
+    // created_at order, and a parent is always created before its replies).
     const byId = new Map(flat.map((c) => [c.id, c]))
     const top = []
     for (const c of flat) {
@@ -468,6 +496,11 @@ export function registerPostRoutes(app, { authenticate }) {
       const rawTimestamp = req.body?.timestampSeconds
       const isGlobal = rawTimestamp === null || rawTimestamp === undefined || rawTimestamp === ''
       if (!isGlobal) {
+        // Only numbers / numeric strings — Number() would otherwise coerce
+        // booleans and arrays into "valid" timestamps.
+        if (typeof rawTimestamp !== 'number' && typeof rawTimestamp !== 'string') {
+          return res.status(400).json({ error: 'INVALID_TIMESTAMP' })
+        }
         timestampSeconds = Math.round(Number(rawTimestamp))
         if (!Number.isFinite(timestampSeconds) || timestampSeconds < 0) {
           return res.status(400).json({ error: 'INVALID_TIMESTAMP' })
@@ -478,9 +511,11 @@ export function registerPostRoutes(app, { authenticate }) {
     if (!content) return res.status(400).json({ error: 'EMPTY_CONTENT' })
     if (content.length > COMMENT_MAX) return res.status(400).json({ error: 'CONTENT_TOO_LONG' })
 
+    // Replies can nest at any depth — the only requirement is that the
+    // parent exists and belongs to the same post.
     if (parentId) {
       const parent = findComment.get(parentId)
-      if (!parent || parent.post_id !== post.id || parent.parent_id) {
+      if (!parent || parent.post_id !== post.id) {
         return res.status(400).json({ error: 'INVALID_PARENT' })
       }
     }
@@ -497,6 +532,8 @@ export function registerPostRoutes(app, { authenticate }) {
       content,
       created_at: createdAt,
       updated_at: null,
+      upvote_count: 0,
+      upvoted_by_me: 0,
       username: auth.user.username,
       rank_label: auth.user.rank_label,
       rank_icon: auth.user.rank_icon,

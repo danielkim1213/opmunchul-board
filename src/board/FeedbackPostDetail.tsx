@@ -17,6 +17,7 @@ import CommentCard from './CommentCard'
 import {
   addReply,
   applyUpvoteResult,
+  countCommentTree,
   findComment,
   removeCommentFromTree,
   toggleUpvoteInTree,
@@ -48,6 +49,7 @@ interface FeedbackPostDetailProps {
 export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: FeedbackPostDetailProps) {
   const [comments, setComments] = useState<PostComment[]>([])
   const [loadingComments, setLoadingComments] = useState(true)
+  const [commentsError, setCommentsError] = useState<string | null>(null)
 
   const [currentTime, setCurrentTime] = useState(0)
 
@@ -76,9 +78,13 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
   useEffect(() => {
     let cancelled = false
     setLoadingComments(true)
+    setCommentsError(null)
     fetchPostComments(post.id)
       .then((data) => {
         if (!cancelled) setComments(data)
+      })
+      .catch(() => {
+        if (!cancelled) setCommentsError('피드백을 불러오지 못했습니다.')
       })
       .finally(() => {
         if (!cancelled) setLoadingComments(false)
@@ -187,14 +193,14 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
   async function handleReplySubmit(parentId: string) {
     const trimmed = replyContent.trim()
     if (!trimmed) return
+    const parent = findComment(comments, parentId)
+    if (!parent) return
     setReplySubmitting(true)
     try {
-      const parent = findComment(comments, parentId)
       // A reply always shares its parent's timestamp (or lack thereof) — a
       // reply to "global" feedback is itself global, not snapped to "now".
-      const timestampSeconds = parent ? parent.timestampSeconds : Math.round(currentTime)
       const comment = await addPostComment(post.id, {
-        timestampSeconds,
+        timestampSeconds: parent.timestampSeconds,
         content: trimmed,
         parentId,
       })
@@ -259,10 +265,9 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
     }
   }, [activeCommentId, syncMode])
 
-  function isCommentActive(c: PostComment) {
-    return (
-      c.timestampSeconds !== null && Math.abs(c.timestampSeconds - currentTime) <= HIGHLIGHT_WINDOW_SECONDS
-    )
+  function registerCommentRef(id: string, el: HTMLLIElement | null) {
+    if (el) commentRefs.current.set(id, el)
+    else commentRefs.current.delete(id)
   }
 
   return (
@@ -408,7 +413,7 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
 
           <div className="comment-feed">
             <div className="comment-feed__header">
-              <h3>피드백 ({comments.length})</h3>
+              <h3>피드백 ({countCommentTree(comments)})</h3>
               <div className="comment-feed__controls">
                 <button
                   type="button"
@@ -435,7 +440,8 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
               </div>
             </div>
 
-            {!loadingComments && comments.length === 0 && (
+            {commentsError && <p className="comment-feed__empty">{commentsError}</p>}
+            {!loadingComments && !commentsError && comments.length === 0 && (
               <p className="comment-feed__empty">아직 피드백이 없습니다. 첫 피드백을 남겨보세요!</p>
             )}
 
@@ -450,26 +456,22 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
                       key={c.id}
                       comment={c}
                       variant="feedback"
-                      isActive={false}
                       currentTime={currentTime}
                       onSeek={handleSeek}
                       onUpvote={handleUpvote}
                       onEdit={handleCommentEdit}
                       onDelete={handleCommentDelete}
                       canInteract={canInteract}
-                      replyOpen={replyTarget === c.id}
-                      replyContent={replyTarget === c.id ? replyContent : ''}
+                      replyTargetId={replyTarget}
+                      replyContent={replyContent}
                       onReplyToggle={(id) => {
                         setReplyTarget(id)
                         setReplyContent('')
                       }}
                       onReplyChange={setReplyContent}
-                      onReplySubmit={() => handleReplySubmit(c.id)}
+                      onReplySubmit={handleReplySubmit}
                       replySubmitting={replySubmitting}
-                      registerRef={(el) => {
-                        if (el) commentRefs.current.set(c.id, el)
-                        else commentRefs.current.delete(c.id)
-                      }}
+                      registerRef={registerCommentRef}
                     />
                   ))}
                 </ul>
@@ -494,26 +496,22 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
                       key={c.id}
                       comment={c}
                       variant="feedback"
-                      isActive={isCommentActive(c)}
                       currentTime={currentTime}
                       onSeek={handleSeek}
                       onUpvote={handleUpvote}
                       onEdit={handleCommentEdit}
                       onDelete={handleCommentDelete}
                       canInteract={canInteract}
-                      replyOpen={replyTarget === c.id}
-                      replyContent={replyTarget === c.id ? replyContent : ''}
+                      replyTargetId={replyTarget}
+                      replyContent={replyContent}
                       onReplyToggle={(id) => {
                         setReplyTarget(id)
                         setReplyContent('')
                       }}
                       onReplyChange={setReplyContent}
-                      onReplySubmit={() => handleReplySubmit(c.id)}
+                      onReplySubmit={handleReplySubmit}
                       replySubmitting={replySubmitting}
-                      registerRef={(el) => {
-                        if (el) commentRefs.current.set(c.id, el)
-                        else commentRefs.current.delete(c.id)
-                      }}
+                      registerRef={registerCommentRef}
                     />
                   ))}
                 </ul>

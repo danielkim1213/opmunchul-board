@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ApiError } from '../api/auth'
 import { fetchPost } from '../api/posts'
 import type { PostDetail as PostDetailData } from '../api/posts'
 import FeedbackPostDetail from './FeedbackPostDetail'
@@ -25,8 +26,13 @@ export default function PostDetail({ postId, onBack, onEdit, onDeleted }: PostDe
       .then((data) => {
         if (!cancelled) setPost(data)
       })
-      .catch(() => {
-        if (!cancelled) setError('게시글을 불러오지 못했습니다.')
+      .catch((err) => {
+        if (cancelled) return
+        setError(
+          err instanceof ApiError && err.httpStatus === 404
+            ? '삭제되었거나 존재하지 않는 게시글입니다.'
+            : '게시글을 불러오지 못했습니다.',
+        )
       })
       .finally(() => {
         if (!cancelled) setLoading(false)

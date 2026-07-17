@@ -15,6 +15,7 @@ import CommentCard from './CommentCard'
 import {
   addReply,
   applyUpvoteResult,
+  countCommentTree,
   findComment,
   removeCommentFromTree,
   toggleUpvoteInTree,
@@ -33,6 +34,7 @@ interface TipPostDetailProps {
 export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPostDetailProps) {
   const [comments, setComments] = useState<PostComment[]>([])
   const [loadingComments, setLoadingComments] = useState(true)
+  const [commentsError, setCommentsError] = useState<string | null>(null)
 
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -46,9 +48,13 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
   useEffect(() => {
     let cancelled = false
     setLoadingComments(true)
+    setCommentsError(null)
     fetchPostComments(post.id)
       .then((data) => {
         if (!cancelled) setComments(data)
+      })
+      .catch(() => {
+        if (!cancelled) setCommentsError('댓글을 불러오지 못했습니다.')
       })
       .finally(() => {
         if (!cancelled) setLoadingComments(false)
@@ -184,7 +190,7 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
 
       <div className="comment-feed">
         <div className="comment-feed__header">
-          <h3>댓글 ({comments.length})</h3>
+          <h3>댓글 ({countCommentTree(comments)})</h3>
         </div>
 
         <form onSubmit={handleSubmit} className="feedback-form__fields">
@@ -206,7 +212,8 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
           {formError && <div className="feedback-form__error">{formError}</div>}
         </form>
 
-        {!loadingComments && comments.length === 0 && (
+        {commentsError && <p className="comment-feed__empty">{commentsError}</p>}
+        {!loadingComments && !commentsError && comments.length === 0 && (
           <p className="comment-feed__empty">아직 댓글이 없습니다. 첫 댓글을 남겨보세요!</p>
         )}
 
@@ -216,18 +223,17 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
               key={c.id}
               comment={c}
               variant="plain"
-              isActive={false}
               onUpvote={handleUpvote}
               onEdit={handleCommentEdit}
               onDelete={handleCommentDelete}
-              replyOpen={replyTarget === c.id}
-              replyContent={replyTarget === c.id ? replyContent : ''}
+              replyTargetId={replyTarget}
+              replyContent={replyContent}
               onReplyToggle={(id) => {
                 setReplyTarget(id)
                 setReplyContent('')
               }}
               onReplyChange={setReplyContent}
-              onReplySubmit={() => handleReplySubmit(c.id)}
+              onReplySubmit={handleReplySubmit}
               replySubmitting={replySubmitting}
               registerRef={() => {}}
             />
