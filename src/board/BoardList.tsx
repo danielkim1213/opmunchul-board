@@ -105,7 +105,7 @@ export default function BoardList({
                     </span>
                     {post.type === 'poll' ? (
                       <span className="post-card__stat">
-                        🗳 {post.voteCount}표 · 💬 {post.commentCount}
+                        🗳 {post.optionCount}개 선택지 · {post.voteCount}표
                       </span>
                     ) : (
                       <span className="post-card__stat">💬 {post.commentCount}</span>

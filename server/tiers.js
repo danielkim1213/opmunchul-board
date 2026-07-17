@@ -1,7 +1,7 @@
 // Shared tier vocabulary for board post permission gating (feedback comments,
-// poll votes/comments). Mirrors the OverFast division keys used in overfast.js,
-// kept separate since this is a general "who can participate" concept rather
-// than an OverFast API concern.
+// poll votes). Mirrors the OverFast division keys used in overfast.js, kept
+// separate since this is a general "who can participate" concept rather than
+// an OverFast API concern.
 
 export const TIER_ORDER = [
   'bronze',
