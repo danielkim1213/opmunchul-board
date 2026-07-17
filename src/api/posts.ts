@@ -85,6 +85,7 @@ export interface PollPostSummary extends PostBase {
   type: 'poll'
   optionCount: number
   voteCount: number
+  commentCount: number
 }
 export type PostSummary = TipPostSummary | FeedbackPostSummary | PollPostSummary
 
@@ -112,6 +113,7 @@ export interface PollPostDetail extends PostBase {
   options: PollOption[]
   totalVotes: number
   myOptionId: string | null
+  commentCount: number
 }
 export type PostDetail = TipPostDetail | FeedbackPostDetail | PollPostDetail
 

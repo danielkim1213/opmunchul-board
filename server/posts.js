@@ -1,6 +1,7 @@
 // Board posts: 'tip' (plain discussion), 'feedback' (VOD review w/ timestamped
-// comments), 'poll' (single-choice vote). All three share the same table with
-// nullable type-specific columns; comments/votes are gated by allowed_tiers.
+// comments), 'poll' (single-choice vote + plain comments). All three share the
+// same table with nullable type-specific columns; comments/votes are gated by
+// allowed_tiers.
 import { randomUUID } from 'node:crypto'
 import db from './db.js'
 import { isTierAllowed, isValidTierKey, parseAllowedTiers, TIER_ORDER } from './tiers.js'
@@ -189,7 +190,12 @@ function toPublicPostSummary(row, viewerRankLabel, viewerKey) {
   const base = toPublicPostBase(row, viewerRankLabel, viewerKey)
   if (row.type === 'poll') {
     const { totalVotes, options } = pollSummary(row.id, viewerKey)
-    return { ...base, optionCount: options.length, voteCount: totalVotes }
+    return {
+      ...base,
+      optionCount: options.length,
+      voteCount: totalVotes,
+      commentCount: countComments.get(row.id).n,
+    }
   }
   return {
     ...base,
@@ -218,7 +224,13 @@ function toPublicPostDetail(row, viewerRankLabel, viewerKey) {
   }
   // poll
   const { options, totalVotes, myOptionId } = pollSummary(row.id, viewerKey)
-  return { ...base, options, totalVotes, myOptionId }
+  return {
+    ...base,
+    options,
+    totalVotes,
+    myOptionId,
+    commentCount: countComments.get(row.id).n,
+  }
 }
 
 function toPublicComment(row, viewerKey) {
@@ -452,7 +464,6 @@ export function registerPostRoutes(app, { authenticate }) {
   app.get('/api/posts/:id/comments', (req, res) => {
     const post = findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
-    if (post.type === 'poll') return res.status(400).json({ error: 'COMMENTS_NOT_SUPPORTED' })
 
     const auth = authenticate(req)
     const viewerKey = auth?.user.username_key ?? null
@@ -479,7 +490,6 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const post = findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
-    if (post.type === 'poll') return res.status(400).json({ error: 'COMMENTS_NOT_SUPPORTED' })
 
     const allowedTiers = parseAllowedTiers(post.allowed_tiers)
     if (!isTierAllowed(auth.user.rank_label, allowedTiers)) {
@@ -490,7 +500,7 @@ export function registerPostRoutes(app, { authenticate }) {
     const parentId = req.body?.parentId ? String(req.body.parentId) : null
 
     // Omitted/null timestamp = "global" feedback not tied to a moment. Tip
-    // posts never carry a timestamp regardless of what's sent.
+    // and poll posts never carry a timestamp regardless of what's sent.
     let timestampSeconds = null
     if (post.type === 'feedback') {
       const rawTimestamp = req.body?.timestampSeconds
