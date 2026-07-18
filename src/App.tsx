@@ -58,7 +58,9 @@ export default function App() {
         {user && (
           <div className="topbar__user">
             {user.avatar && <img src={user.avatar} alt="" />}
-            <span className="topbar__tag">{user.username}</span>
+            <span className={`topbar__tag${user.isAdmin ? ' username--admin' : ''}`}>
+              {user.username}
+            </span>
             <span className="topbar__bt">{user.battletag}</span>
             <RankBadge
               rankLabel={user.rankLabel}
@@ -95,8 +97,8 @@ export default function App() {
               시작하는 진짜 옵치 커뮤니티
             </h1>
             <p className="hero__desc">
-              원하는 아이디로 가입하고, Blizzard 계정 연동으로 배틀태그를
-              안전하게 인증하세요. 도용 없는 진짜 전적만 배지로 보여줍니다.
+              Blizzard OAuth 계정 연동으로 배틀태그를 안전하게 인증!
+              티어및 포지션만 배지로 보여줍니다. (세포지중 최고티어, 프비공시 unranked로 표시)
             </p>
             <ul className="hero__points">
               <li>원하는 아이디로 가입 + 중복확인</li>
@@ -110,7 +112,7 @@ export default function App() {
         </main>
       ) : (
         <main className="board">
-          <Board />
+          <Board isAdmin={Boolean(user.isAdmin)} />
         </main>
       )}
 

@@ -20,6 +20,7 @@ import {
   isBlizzardConfigured,
 } from './blizzard.js'
 import { registerPostRoutes } from './posts.js'
+import { isAdminKey } from './admins.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
@@ -168,6 +169,7 @@ function toPublicUser(row) {
   return {
     username: row.username,
     battletag: row.battletag,
+    isAdmin: isAdminKey(row.username_key),
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     rankRole: row.rank_role ?? null,

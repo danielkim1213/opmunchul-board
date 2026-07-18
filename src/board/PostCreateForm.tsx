@@ -21,6 +21,7 @@ const TYPE_OPTIONS: { key: PostType; emoji: string; label: string }[] = [
 const ERROR_MESSAGES: Record<string, string> = {
   UNAUTHENTICATED: '로그인이 필요합니다.',
   FORBIDDEN: '본인 글만 수정할 수 있습니다.',
+  ADMIN_ONLY: '공지글은 관리자만 작성할 수 있습니다.',
   EMPTY_TITLE: '제목을 입력해 주세요.',
   TITLE_TOO_LONG: `제목은 ${TITLE_MAX}자 이내로 작성해 주세요.`,
   EMPTY_BODY: '내용을 입력해 주세요.',
@@ -34,11 +35,18 @@ const ERROR_MESSAGES: Record<string, string> = {
 interface PostCreateFormProps {
   /** When provided, the form edits this existing post instead of creating a new one. */
   editingPost?: PostDetail
+  /** Admins may pin a post as a notice. */
+  isAdmin?: boolean
   onCreated: (post: PostDetail) => void
   onCancel: () => void
 }
 
-export default function PostCreateForm({ editingPost, onCreated, onCancel }: PostCreateFormProps) {
+export default function PostCreateForm({
+  editingPost,
+  isAdmin = false,
+  onCreated,
+  onCancel,
+}: PostCreateFormProps) {
   const isEditing = Boolean(editingPost)
   const [selectableType, setSelectableType] = useState<PostType>(editingPost?.type ?? 'tip')
   const activeType = isEditing ? (editingPost?.type ?? 'tip') : selectableType
@@ -61,6 +69,7 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
     editingPost?.type === 'poll' ? editingPost.options.map((o) => o.label) : ['', ''],
   )
   const [allowedTiers, setAllowedTiers] = useState<TierKey[]>(editingPost?.allowedTiers ?? [])
+  const [isNotice, setIsNotice] = useState(editingPost?.isNotice ?? false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -90,6 +99,8 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
       return
     }
 
+    const noticeFlag = isAdmin ? isNotice : false
+
     setSubmitting(true)
     try {
       let post: PostDetail
@@ -101,7 +112,11 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             setSubmitting(false)
             return
           }
-          post = await updatePost(editingPost.id, { title: trimmedTitle, body: trimmedBody })
+          post = await updatePost(editingPost.id, {
+            title: trimmedTitle,
+            body: trimmedBody,
+            isNotice: noticeFlag,
+          })
         } else if (activeType === 'feedback') {
           const trimmedBody = body.trim()
           const trimmedHero = hero.trim()
@@ -129,10 +144,15 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             teamSide,
             youtubeUrl: trimmedUrl,
             allowedTiers,
+            isNotice: noticeFlag,
           })
         } else {
-          // poll: options aren't editable, only title/tiers.
-          post = await updatePost(editingPost.id, { title: trimmedTitle, allowedTiers })
+          // poll: options aren't editable, only title/tiers/notice.
+          post = await updatePost(editingPost.id, {
+            title: trimmedTitle,
+            allowedTiers,
+            isNotice: noticeFlag,
+          })
         }
       } else {
         let input: CreatePostInput
@@ -143,7 +163,7 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             setSubmitting(false)
             return
           }
-          input = { type: 'tip', title: trimmedTitle, body: trimmedBody }
+          input = { type: 'tip', title: trimmedTitle, body: trimmedBody, isNotice: noticeFlag }
         } else if (activeType === 'feedback') {
           const trimmedBody = body.trim()
           const trimmedReplayCode = replayCode.trim()
@@ -173,6 +193,7 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             teamSide,
             youtubeUrl: trimmedUrl,
             allowedTiers,
+            isNotice: noticeFlag,
           }
         } else {
           const trimmedOptions = options.map((o) => o.trim()).filter(Boolean)
@@ -181,7 +202,13 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             setSubmitting(false)
             return
           }
-          input = { type: 'poll', title: trimmedTitle, options: trimmedOptions, allowedTiers }
+          input = {
+            type: 'poll',
+            title: trimmedTitle,
+            options: trimmedOptions,
+            allowedTiers,
+            isNotice: noticeFlag,
+          }
         }
         post = await createPost(input)
       }
@@ -230,6 +257,20 @@ export default function PostCreateForm({ editingPost, onCreated, onCancel }: Pos
             placeholder="제목을 입력하세요"
           />
         </div>
+
+        {isAdmin && (
+          <label className="post-create__notice-toggle">
+            <input
+              type="checkbox"
+              checked={isNotice}
+              onChange={(e) => setIsNotice(e.target.checked)}
+            />
+            <span>
+              📌 공지글로 등록
+              <span className="field__hint">목록 최상단에 고정되고 제목 배경이 구분됩니다.</span>
+            </span>
+          </label>
+        )}
 
         {activeType === 'tip' && (
           <div className="field">

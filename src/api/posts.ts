@@ -50,6 +50,8 @@ export const TIER_LABEL_KO: Record<TierKey, string> = {
 // board, so only the account's chosen `username` is ever shown to others.
 export interface PostAuthor {
   username: string
+  /** Admin accounts get distinct username styling. */
+  isAdmin: boolean
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -63,10 +65,14 @@ interface PostBase {
   allowedTiers: TierKey[]
   /** Whether the current viewer's tier satisfies allowedTiers (participation, not visibility). */
   viewerEligible: boolean
+  /** Notice posts (admin-only) are pinned to the top of the list. */
+  isNotice: boolean
   createdAt: number
   updatedAt: number | null
-  /** Whether the current viewer is the author — gates edit/delete UI. */
+  /** Whether the current viewer is the author — gates the edit UI. */
   isMine: boolean
+  /** Author or admin — gates the delete UI. */
+  canDelete: boolean
 }
 
 export interface TipPostSummary extends PostBase {
@@ -117,6 +123,8 @@ export type PostDetail = TipPostDetail | FeedbackPostDetail | PollPostDetail
 
 export interface PostCommentAuthor {
   username: string
+  /** Admin accounts get distinct username styling. */
+  isAdmin: boolean
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -134,13 +142,15 @@ export interface PostComment {
   author: PostCommentAuthor
   upvotes: number
   upvotedByMe: boolean
-  /** Whether the current viewer wrote this comment — gates edit/delete UI. */
+  /** Whether the current viewer wrote this comment — gates the edit UI. */
   isMine: boolean
+  /** Author or admin — gates the delete UI. */
+  canDelete: boolean
   replies: PostComment[]
 }
 
 export type CreatePostInput =
-  | { type: 'tip'; title: string; body: string; allowedTiers?: TierKey[] }
+  | { type: 'tip'; title: string; body: string; allowedTiers?: TierKey[]; isNotice?: boolean }
   | {
       type: 'feedback'
       title: string
@@ -150,8 +160,9 @@ export type CreatePostInput =
       teamSide: TeamSide
       youtubeUrl: string
       allowedTiers?: TierKey[]
+      isNotice?: boolean
     }
-  | { type: 'poll'; title: string; options: string[]; allowedTiers?: TierKey[] }
+  | { type: 'poll'; title: string; options: string[]; allowedTiers?: TierKey[]; isNotice?: boolean }
 
 /** Partial update — only fields relevant to the post's type are applied server-side. */
 export interface UpdatePostInput {
@@ -162,6 +173,7 @@ export interface UpdatePostInput {
   teamSide?: TeamSide
   youtubeUrl?: string
   allowedTiers?: TierKey[]
+  isNotice?: boolean
 }
 
 async function handle<T>(res: Response): Promise<T> {

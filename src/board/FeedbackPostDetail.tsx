@@ -74,6 +74,8 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
   const commentRefs = useRef(new Map<string, HTMLLIElement>())
 
   const canInteract = post.viewerEligible
+  const canEdit = post.isMine
+  const canDelete = post.canDelete
 
   useEffect(() => {
     let cancelled = false
@@ -282,26 +284,35 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
 
           <div className="vod-meta">
             <div className="post-detail__header-top">
-              <span className="post-detail__type-badge post-detail__type-badge--feedback">
-                🎬 피드백
-              </span>
-              {post.isMine && (
+              <div className="post-detail__badges">
+                {post.isNotice && <span className="notice-badge">📌 공지</span>}
+                <span className="post-detail__type-badge post-detail__type-badge--feedback">
+                  🎬 피드백
+                </span>
+              </div>
+              {(canEdit || canDelete) && (
                 <div className="post-detail__actions">
-                  <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
-                    ✏️ 수정
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--ghost btn--small"
-                    onClick={handleDeletePost}
-                    disabled={deletingPost}
-                  >
-                    🗑 삭제
-                  </button>
+                  {canEdit && (
+                    <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
+                      ✏️ 수정
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--small"
+                      onClick={handleDeletePost}
+                      disabled={deletingPost}
+                    >
+                      🗑 삭제
+                    </button>
+                  )}
                 </div>
               )}
             </div>
-            <h1 className="post-detail__title">{post.title}</h1>
+            <h1 className={`post-detail__title${post.isNotice ? ' post-detail__title--notice' : ''}`}>
+              {post.title}
+            </h1>
             <div className="vod-meta__grid">
               {post.replayCode && (
                 <div className="vod-meta__field">
@@ -318,7 +329,9 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
               <div className="vod-meta__field vod-meta__field--submitter">
                 <span className="vod-meta__label">작성자</span>
                 <span className="vod-meta__value vod-meta__submitter">
-                  {post.author.username}
+                  <span className={post.author.isAdmin ? 'username--admin' : undefined}>
+                    {post.author.username}
+                  </span>
                   <RankBadge
                     rankLabel={post.author.rankLabel}
                     rankIcon={post.author.rankIcon}

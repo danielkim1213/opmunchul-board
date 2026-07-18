@@ -45,6 +45,9 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
   const [replyContent, setReplyContent] = useState('')
   const [replySubmitting, setReplySubmitting] = useState(false)
 
+  const canEdit = post.isMine
+  const canDelete = post.canDelete
+
   useEffect(() => {
     let cancelled = false
     setLoadingComments(true)
@@ -154,26 +157,37 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
 
       <div className="post-detail__header">
         <div className="post-detail__header-top">
-          <span className="post-detail__type-badge post-detail__type-badge--tip">💡 팁</span>
-          {post.isMine && (
+          <div className="post-detail__badges">
+            {post.isNotice && <span className="notice-badge">📌 공지</span>}
+            <span className="post-detail__type-badge post-detail__type-badge--tip">💡 팁</span>
+          </div>
+          {(canEdit || canDelete) && (
             <div className="post-detail__actions">
-              <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
-                ✏️ 수정
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                onClick={handleDeletePost}
-                disabled={deleting}
-              >
-                🗑 삭제
-              </button>
+              {canEdit && (
+                <button type="button" className="btn btn--ghost btn--small" onClick={onEdit}>
+                  ✏️ 수정
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--small"
+                  onClick={handleDeletePost}
+                  disabled={deleting}
+                >
+                  🗑 삭제
+                </button>
+              )}
             </div>
           )}
         </div>
-        <h1 className="post-detail__title">{post.title}</h1>
+        <h1 className={`post-detail__title${post.isNotice ? ' post-detail__title--notice' : ''}`}>
+          {post.title}
+        </h1>
         <div className="post-detail__author">
-          <span className="post-detail__tag">{post.author.username}</span>
+          <span className={`post-detail__tag${post.author.isAdmin ? ' username--admin' : ''}`}>
+            {post.author.username}
+          </span>
           <RankBadge
             rankLabel={post.author.rankLabel}
             rankIcon={post.author.rankIcon}
@@ -193,7 +207,7 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
           <h3>댓글 ({countCommentTree(comments)})</h3>
         </div>
 
-        <form onSubmit={handleSubmit} className="feedback-form__fields">
+        <form onSubmit={handleSubmit} className="feedback-form comment-form">
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value.slice(0, COMMENT_MAX))}

@@ -53,9 +53,33 @@
   gap: 8px;
 }
 
+.post-detail__badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
 .post-detail__actions {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
+}
+
+.notice-badge {
+  font-size: 12px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 3px 11px;
+  color: #fde68a;
+  border: 1px solid rgba(253, 230, 138, 0.45);
+  background: rgba(234, 179, 8, 0.16);
+}
+
+.username--admin {
+  color: #fbbf24;
+  font-weight: 800;
 }
 
 .post-detail__type-badge {
@@ -90,6 +114,13 @@
   font-size: 24px;
   font-weight: 800;
   margin: 0;
+}
+
+.post-detail__title--notice,
+.post-card--notice .post-card__title {
+  background: rgba(234, 179, 8, 0.18);
+  border-radius: 6px;
+  padding: 4px 8px;
 }
 
 .post-detail__author {
@@ -252,6 +283,11 @@
   white-space: nowrap;
 }
 
+.post-card--notice {
+  border-color: rgba(234, 179, 8, 0.45);
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.1), rgba(6, 12, 24, 0.35));
+}
+
 .post-card__meta {
   display: flex;
   align-items: center;
@@ -330,6 +366,40 @@
   margin-bottom: 8px;
 }
 
+.post-create__notice-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  background: rgba(234, 179, 8, 0.08);
+  cursor: pointer;
+  user-select: none;
+}
+
+.post-create__notice-toggle input {
+  margin-top: 2px;
+  accent-color: #eab308;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.post-create__notice-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #fde68a;
+}
+
+.post-create__notice-toggle .field__hint {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
 .post-create__option-row {
   display: flex;
   gap: 8px;
@@ -392,6 +462,45 @@
 }
 
 /* ================= Poll ================= */
+.poll__tiers {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: rgba(33, 143, 254, 0.06);
+}
+
+.poll__tiers-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.tier-chip {
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: var(--blue);
+  border: 1px solid rgba(33, 143, 254, 0.4);
+  background: rgba(33, 143, 254, 0.1);
+}
+
+.tier-chip--all {
+  color: var(--text-dim);
+  border-color: var(--card-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.poll__cancel-hint {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
 .poll {
   display: flex;
   flex-direction: column;
@@ -431,7 +540,10 @@
 
 .poll__option:disabled {
   cursor: not-allowed;
-  opacity: 0.85;
+}
+
+.poll__option:disabled:not(.poll__option--mine) {
+  opacity: 0.7;
 }
 
 .poll__option--mine {
@@ -628,7 +740,7 @@
   color: var(--text);
 }
 
-/* ---------- Feedback form ---------- */
+/* ---------- Feedback / tip comment form ---------- */
 .feedback-form {
   background: var(--card);
   border: 1px solid var(--card-border);
@@ -637,6 +749,14 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.comment-form {
+  gap: 10px;
+}
+
+.comment-form textarea {
+  min-height: 84px;
 }
 
 .feedback-form__now-btn {

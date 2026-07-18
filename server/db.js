@@ -158,6 +158,9 @@ function addColumnIfMissing(table, column, ddl) {
 addColumnIfMissing('posts', 'updated_at', 'updated_at INTEGER')
 addColumnIfMissing('post_comments', 'updated_at', 'updated_at INTEGER')
 
+// Notice posts (admin-only) are pinned to the top of the board list.
+addColumnIfMissing('posts', 'is_notice', 'is_notice INTEGER NOT NULL DEFAULT 0')
+
 // team_side terminology moved from attack/defense to red/blue — remap any
 // rows written under the old scheme so old feedback posts still render.
 db.exec(`UPDATE posts SET team_side = 'red' WHERE team_side = 'attack';`)

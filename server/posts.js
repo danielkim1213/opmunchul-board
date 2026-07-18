@@ -3,6 +3,7 @@
 // nullable type-specific columns; comments/votes are gated by allowed_tiers.
 import { randomUUID } from 'node:crypto'
 import db from './db.js'
+import { isAdminKey } from './admins.js'
 import { isTierAllowed, isValidTierKey, parseAllowedTiers, TIER_ORDER } from './tiers.js'
 
 const TITLE_MAX = 100
@@ -42,12 +43,12 @@ function extractYoutubeId(input) {
 const insertPost = db.prepare(`
   INSERT INTO posts (
     id, type, title, body, author_username_key, allowed_tiers,
-    replay_code, youtube_id, hero, team_side, created_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    replay_code, youtube_id, hero, team_side, is_notice, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `)
 const updatePostRow = db.prepare(`
   UPDATE posts
-  SET title = ?, body = ?, allowed_tiers = ?, replay_code = ?, youtube_id = ?, hero = ?, team_side = ?, updated_at = ?
+  SET title = ?, body = ?, allowed_tiers = ?, replay_code = ?, youtube_id = ?, hero = ?, team_side = ?, is_notice = ?, updated_at = ?
   WHERE id = ?
 `)
 const deletePostRow = db.prepare('DELETE FROM posts WHERE id = ?')
@@ -60,7 +61,7 @@ const listPostsRaw = db.prepare(`
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
   WHERE (? IS NULL OR p.type = ?)
-  ORDER BY p.created_at DESC
+  ORDER BY p.is_notice DESC, p.created_at DESC
 `)
 const findPostWithAuthor = db.prepare(`
   SELECT p.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
@@ -94,6 +95,9 @@ const upsertVote = db.prepare(`
     option_id = excluded.option_id,
     created_at = excluded.created_at
 `)
+const deleteVote = db.prepare(
+  'DELETE FROM post_poll_votes WHERE post_id = ? AND username_key = ?',
+)
 
 const insertComment = db.prepare(`
   INSERT INTO post_comments (id, post_id, parent_id, username_key, timestamp_seconds, content, created_at)
@@ -151,6 +155,9 @@ function parseMostHeroes(raw) {
 function toPublicAuthor(row) {
   return {
     username: row.username,
+    // Post rows carry the author key as author_username_key; comment rows as
+    // username_key.
+    isAdmin: isAdminKey(row.author_username_key ?? row.username_key),
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     roleLabel: roleLabelOf(row.rank_role),
@@ -172,6 +179,7 @@ function pollSummary(postId, viewerKey) {
 /** Shared summary fields for both list rows and single-post detail. */
 function toPublicPostBase(row, viewerRankLabel, viewerKey) {
   const allowedTiers = parseAllowedTiers(row.allowed_tiers)
+  const isMine = viewerKey ? row.author_username_key === viewerKey : false
   return {
     id: row.id,
     type: row.type,
@@ -179,9 +187,12 @@ function toPublicPostBase(row, viewerRankLabel, viewerKey) {
     author: toPublicAuthor(row),
     allowedTiers,
     viewerEligible: isTierAllowed(viewerRankLabel, allowedTiers),
+    isNotice: Boolean(row.is_notice),
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
-    isMine: viewerKey ? row.author_username_key === viewerKey : false,
+    isMine,
+    /** Admins may delete any post (moderation); editing stays author-only. */
+    canDelete: isMine || isAdminKey(viewerKey),
   }
 }
 
@@ -240,6 +251,7 @@ function toPublicComment(row, viewerKey) {
           ? Boolean(hasUpvoted.get(row.id, viewerKey))
           : false,
     isMine: viewerKey ? row.username_key === viewerKey : false,
+    canDelete: (viewerKey ? row.username_key === viewerKey : false) || isAdminKey(viewerKey),
   }
 }
 
@@ -285,6 +297,13 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const allowedTiers = type === 'tip' ? [] : sanitizeAllowedTiers(req.body?.allowedTiers)
 
+    // Notice posts are pinned to the top of the list — admin only.
+    const isNotice = Boolean(req.body?.isNotice)
+    if (isNotice && !isAdminKey(auth.user.username_key)) {
+      return res.status(403).json({ error: 'ADMIN_ONLY' })
+    }
+    const noticeFlag = isNotice ? 1 : 0
+
     const id = randomUUID()
     const createdAt = Date.now()
 
@@ -293,7 +312,7 @@ export function registerPostRoutes(app, { authenticate }) {
       if (!body) return res.status(400).json({ error: 'EMPTY_BODY' })
       if (body.length > TIP_BODY_MAX) return res.status(400).json({ error: 'BODY_TOO_LONG' })
 
-      insertPost.run(id, type, title, body, auth.user.username_key, null, null, null, null, null, createdAt)
+      insertPost.run(id, type, title, body, auth.user.username_key, null, null, null, null, null, noticeFlag, createdAt)
     } else if (type === 'feedback') {
       const body = String(req.body?.body ?? '').trim()
       // Replay code is a nice-to-have, not required — plenty of feedback
@@ -319,6 +338,7 @@ export function registerPostRoutes(app, { authenticate }) {
         youtubeId,
         hero,
         teamSide,
+        noticeFlag,
         createdAt,
       )
     } else {
@@ -347,6 +367,7 @@ export function registerPostRoutes(app, { authenticate }) {
           null,
           null,
           null,
+          noticeFlag,
           createdAt,
         )
         options.forEach((label, index) => {
@@ -415,6 +436,15 @@ export function registerPostRoutes(app, { authenticate }) {
     // poll: options are intentionally not editable once created (keeps
     // existing votes meaningful) — only title/allowedTiers change above.
 
+    let noticeFlag = row.is_notice ? 1 : 0
+    if (req.body?.isNotice !== undefined) {
+      const wantNotice = Boolean(req.body.isNotice)
+      if (wantNotice !== Boolean(row.is_notice) && !isAdminKey(auth.user.username_key)) {
+        return res.status(403).json({ error: 'ADMIN_ONLY' })
+      }
+      noticeFlag = wantNotice ? 1 : 0
+    }
+
     updatePostRow.run(
       title,
       body,
@@ -423,6 +453,7 @@ export function registerPostRoutes(app, { authenticate }) {
       youtubeId,
       hero,
       teamSide,
+      noticeFlag,
       Date.now(),
       row.id,
     )
@@ -439,7 +470,8 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const row = findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
-    if (row.author_username_key !== auth.user.username_key) {
+    // Admins may delete any post (moderation power).
+    if (row.author_username_key !== auth.user.username_key && !isAdminKey(auth.user.username_key)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 
@@ -579,7 +611,8 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const comment = findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
-    if (comment.username_key !== auth.user.username_key) {
+    // Admins may delete any comment (moderation power).
+    if (comment.username_key !== auth.user.username_key && !isAdminKey(auth.user.username_key)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 
@@ -633,7 +666,13 @@ export function registerPostRoutes(app, { authenticate }) {
       return res.status(400).json({ error: 'INVALID_OPTION' })
     }
 
-    upsertVote.run(post.id, optionId, auth.user.username_key, Date.now())
+    // Voting the option you already picked cancels the vote (toggle).
+    const existing = findMyVote.get(post.id, auth.user.username_key)
+    if (existing?.option_id === optionId) {
+      deleteVote.run(post.id, auth.user.username_key)
+    } else {
+      upsertVote.run(post.id, optionId, auth.user.username_key, Date.now())
+    }
 
     const { options, totalVotes, myOptionId } = pollSummary(post.id, auth.user.username_key)
     return res.json({ options, totalVotes, myOptionId })

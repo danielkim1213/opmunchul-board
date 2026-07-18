@@ -6,6 +6,10 @@ import PostCreateForm from './PostCreateForm'
 import PostDetail from './PostDetail'
 import './Board.css'
 
+interface BoardProps {
+  isAdmin: boolean
+}
+
 type Filter = PostType | 'all'
 type View =
   | { name: 'list' }
@@ -54,20 +58,26 @@ function navigate(view: View, options: { replace?: boolean } = {}) {
 }
 
 /** Loads the post being edited by id, so the edit URL survives refresh/back. */
-function PostEditor({ postId }: { postId: string }) {
+function PostEditor({ postId, isAdmin }: { postId: string; isAdmin: boolean }) {
   const [post, setPost] = useState<PostDetailData | null>(null)
-  const [error, setError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setPost(null)
-    setError(false)
+    setError(null)
     fetchPost(postId)
       .then((data) => {
-        if (!cancelled) setPost(data)
+        if (cancelled) return
+        // Editing stays author-only — admins may delete others' posts but not edit them.
+        if (!data.isMine) {
+          setError('본인 글만 수정할 수 있습니다.')
+          return
+        }
+        setPost(data)
       })
       .catch(() => {
-        if (!cancelled) setError(true)
+        if (!cancelled) setError('게시글을 불러오지 못했습니다.')
       })
     return () => {
       cancelled = true
@@ -77,7 +87,7 @@ function PostEditor({ postId }: { postId: string }) {
   if (error) {
     return (
       <div className="post-detail post-detail--status post-detail--error">
-        게시글을 불러오지 못했습니다.
+        {error}
       </div>
     )
   }
@@ -87,13 +97,14 @@ function PostEditor({ postId }: { postId: string }) {
   return (
     <PostCreateForm
       editingPost={post}
+      isAdmin={isAdmin}
       onCreated={(updated) => navigate({ name: 'detail', postId: updated.id }, { replace: true })}
       onCancel={() => navigate({ name: 'detail', postId }, { replace: true })}
     />
   )
 }
 
-export default function Board() {
+export default function Board({ isAdmin }: BoardProps) {
   const [view, setView] = useState<View>(() => parseHash(window.location.hash))
   const [filter, setFilter] = useState<Filter>('all')
   const [posts, setPosts] = useState<PostSummary[]>([])
@@ -133,6 +144,7 @@ export default function Board() {
   if (view.name === 'create') {
     return (
       <PostCreateForm
+        isAdmin={isAdmin}
         onCreated={(post) => navigate({ name: 'detail', postId: post.id }, { replace: true })}
         onCancel={() => navigate({ name: 'list' }, { replace: true })}
       />
@@ -140,7 +152,7 @@ export default function Board() {
   }
 
   if (view.name === 'edit') {
-    return <PostEditor postId={view.postId} />
+    return <PostEditor postId={view.postId} isAdmin={isAdmin} />
   }
 
   return (

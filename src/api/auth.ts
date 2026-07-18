@@ -23,6 +23,8 @@ export interface MostHero {
 export interface AuthUser {
   username: string
   battletag: string
+  /** Admin accounts can pin notices and moderate (delete) any post/comment. */
+  isAdmin: boolean
   rankLabel: string
   rankIcon: string | null
   rankRole: string | null

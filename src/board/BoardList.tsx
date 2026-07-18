@@ -67,7 +67,11 @@ export default function BoardList({
           const badge = TYPE_BADGE[post.type]
           return (
             <li key={post.id}>
-              <button type="button" className="post-card" onClick={() => onSelect(post.id)}>
+              <button
+                type="button"
+                className={`post-card${post.isNotice ? ' post-card--notice' : ''}`}
+                onClick={() => onSelect(post.id)}
+              >
                 {post.type === 'feedback' && (
                   <img
                     className="post-card__thumb"
@@ -78,6 +82,7 @@ export default function BoardList({
                 )}
                 <div className="post-card__body">
                   <div className="post-card__top">
+                    {post.isNotice && <span className="notice-badge">📌 공지</span>}
                     <span className={`post-card__type post-card__type--${post.type}`}>
                       {badge.emoji} {badge.label}
                     </span>
@@ -94,7 +99,9 @@ export default function BoardList({
                   <div className="post-card__title">{post.title}</div>
                   <div className="post-card__meta">
                     <span className="post-card__author">
-                      {post.author.username}
+                      <span className={post.author.isAdmin ? 'username--admin' : undefined}>
+                        {post.author.username}
+                      </span>
                       <RankBadge
                         rankLabel={post.author.rankLabel}
                         rankIcon={post.author.rankIcon}

@@ -95,7 +95,9 @@ export default function CommentCard({
       }`}
     >
       <div className="comment-card__header">
-        <span className="comment-card__tag">{comment.author.username}</span>
+        <span className={`comment-card__tag${comment.author.isAdmin ? ' username--admin' : ''}`}>
+          {comment.author.username}
+        </span>
         <RankBadge
           rankLabel={comment.author.rankLabel}
           rankIcon={comment.author.rankIcon}
@@ -177,14 +179,14 @@ export default function CommentCard({
           💬 답글{comment.replies.length > 0 ? ` ${comment.replies.length}` : ''}
         </button>
         {comment.isMine && !isEditing && (
-          <>
-            <button type="button" className="action-btn" onClick={startEdit}>
-              ✏️ 수정
-            </button>
-            <button type="button" className="action-btn action-btn--danger" onClick={handleDelete}>
-              🗑 삭제
-            </button>
-          </>
+          <button type="button" className="action-btn" onClick={startEdit}>
+            ✏️ 수정
+          </button>
+        )}
+        {(comment.canDelete || comment.isMine) && !isEditing && (
+          <button type="button" className="action-btn action-btn--danger" onClick={handleDelete}>
+            🗑 삭제
+          </button>
         )}
       </div>
 
