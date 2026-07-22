@@ -75,10 +75,12 @@
   color: var(--orange);
   font-size: 12px;
   font-weight: 700;
-  gap: 4px;
 }
 
 .topbar__user .rank-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   border: 1px solid rgba(249, 158, 26, 0.4);
   border-radius: 999px;
@@ -561,6 +563,7 @@
 .rank-pill {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   color: var(--orange);
   font-weight: 900;
   font-size: 15px;

@@ -7,7 +7,7 @@ interface RankBadgeProps {
   rankIcon?: string | null
   roleLabel?: string | null
   mostHeroes?: MostHero[]
-  /** Emphasize brackets like [Support · Silver IV] */
+  /** Emphasize brackets like [Silver IV · Support] */
   bracketed?: boolean
 }
 
@@ -32,7 +32,7 @@ export default function RankBadge({
   const [open, setOpen] = useState(false)
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null)
 
-  const label = roleLabel ? `${roleLabel} · ${rankLabel}` : rankLabel
+  const label = roleLabel ? `${rankLabel} · ${roleLabel}` : rankLabel
   const text = bracketed ? `[${label}]` : label
   // Always allow hover on a verified rank badge — content may still be loading.
   const hasTooltip = Boolean(rankLabel)
@@ -62,12 +62,12 @@ export default function RankBadge({
       onFocus={() => hasTooltip && setOpen(true)}
       onBlur={() => setOpen(false)}
     >
-      {rankIcon && <img src={rankIcon} alt="" className="rank-badge__icon" />}
       <span
         className="rank-pill"
         tabIndex={hasTooltip ? 0 : undefined}
         aria-describedby={open ? tipId : undefined}
       >
+        {rankIcon && <img src={rankIcon} alt="" className="rank-badge__icon" />}
         {text}
       </span>
 
