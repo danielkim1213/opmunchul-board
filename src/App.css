@@ -86,8 +86,10 @@
 }
 
 .topbar__user .rank-pill img {
-  width: 16px;
   height: 16px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 /* ---------- Landing layout ---------- */
@@ -561,8 +563,10 @@
 }
 
 .rank-pill img {
-  width: 22px;
   height: 22px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .rank-badge--has-tip .rank-pill {
