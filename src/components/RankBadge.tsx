@@ -62,12 +62,12 @@ export default function RankBadge({
       onFocus={() => hasTooltip && setOpen(true)}
       onBlur={() => setOpen(false)}
     >
+      {rankIcon && <img src={rankIcon} alt="" className="rank-badge__icon" />}
       <span
         className="rank-pill"
         tabIndex={hasTooltip ? 0 : undefined}
         aria-describedby={open ? tipId : undefined}
       >
-        {rankIcon && <img src={rankIcon} alt="" />}
         {text}
       </span>
 

@@ -75,21 +75,18 @@
   color: var(--orange);
   font-size: 12px;
   font-weight: 700;
+  gap: 4px;
+}
+
+.topbar__user .rank-pill {
+  font-size: 12px;
   border: 1px solid rgba(249, 158, 26, 0.4);
   border-radius: 999px;
   padding: 2px 10px;
 }
 
-.topbar__user .rank-pill {
-  font-size: 12px;
-  gap: 4px;
-}
-
-.topbar__user .rank-pill img {
+.topbar__user .rank-badge__icon {
   height: 16px;
-  width: auto;
-  object-fit: contain;
-  flex-shrink: 0;
 }
 
 /* ---------- Landing layout ---------- */
@@ -549,24 +546,25 @@
 .rank-badge {
   position: relative;
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
   vertical-align: middle;
+}
+
+.rank-badge__icon {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .rank-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   color: var(--orange);
   font-weight: 900;
   font-size: 15px;
   cursor: default;
-}
-
-.rank-pill img {
-  height: 22px;
-  width: auto;
-  object-fit: contain;
-  flex-shrink: 0;
 }
 
 .rank-badge--has-tip .rank-pill {
