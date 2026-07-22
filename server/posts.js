@@ -257,7 +257,12 @@ function toPublicComment(row, viewerKey) {
 
 function sanitizeAllowedTiers(raw) {
   if (!Array.isArray(raw)) return []
-  const unique = [...new Set(raw)].filter(isValidTierKey)
+  // Accept legacy "ultimate" from older clients, store as "champion".
+  const unique = [
+    ...new Set(
+      raw.map((key) => (key === 'ultimate' ? 'champion' : key)).filter(isValidTierKey),
+    ),
+  ]
   return TIER_ORDER.filter((t) => unique.includes(t))
 }
 

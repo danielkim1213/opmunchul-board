@@ -79,6 +79,8 @@ async function getHeroCatalog() {
   return heroCatalogCache
 }
 
+// OverFast CompetitiveDivision still uses "ultimate" for Champion; normalize
+// to our canonical "champion" key everywhere else in the app.
 const DIVISION_ORDER = [
   'bronze',
   'silver',
@@ -87,7 +89,7 @@ const DIVISION_ORDER = [
   'diamond',
   'master',
   'grandmaster',
-  'ultimate',
+  'champion',
 ]
 
 const DIVISION_LABEL = {
@@ -98,7 +100,11 @@ const DIVISION_LABEL = {
   diamond: 'Diamond',
   master: 'Master',
   grandmaster: 'Grandmaster',
-  ultimate: 'Champion',
+  champion: 'Champion',
+}
+
+function normalizeDivision(division) {
+  return division === 'ultimate' ? 'champion' : division
 }
 
 const TIER_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V']
@@ -117,7 +123,8 @@ export function getBestRank(summary) {
     for (const role of ['tank', 'damage', 'support']) {
       const rank = roles[role]
       if (!rank || !rank.division) continue
-      const score = DIVISION_ORDER.indexOf(rank.division) * 10 + (5 - rank.tier)
+      const division = normalizeDivision(rank.division)
+      const score = DIVISION_ORDER.indexOf(division) * 10 + (5 - rank.tier)
       const bestScore = best
         ? DIVISION_ORDER.indexOf(best.division) * 10 + (5 - best.tier)
         : -1
@@ -125,9 +132,9 @@ export function getBestRank(summary) {
         best = {
           role,
           platform,
-          division: rank.division,
+          division,
           tier: rank.tier,
-          label: `${DIVISION_LABEL[rank.division]} ${TIER_ROMAN[rank.tier] ?? rank.tier}`,
+          label: `${DIVISION_LABEL[division]} ${TIER_ROMAN[rank.tier] ?? rank.tier}`,
           rankIcon: rank.rank_icon ?? null,
         }
       }

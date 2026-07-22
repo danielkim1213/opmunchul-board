@@ -22,7 +22,7 @@ export type TierKey =
   | 'diamond'
   | 'master'
   | 'grandmaster'
-  | 'ultimate'
+  | 'champion'
 
 export const TIER_ORDER: TierKey[] = [
   'bronze',
@@ -32,7 +32,7 @@ export const TIER_ORDER: TierKey[] = [
   'diamond',
   'master',
   'grandmaster',
-  'ultimate',
+  'champion',
 ]
 
 export const TIER_LABEL_KO: Record<TierKey, string> = {
@@ -43,7 +43,7 @@ export const TIER_LABEL_KO: Record<TierKey, string> = {
   diamond: '다이아몬드',
   master: '마스터',
   grandmaster: '그랜드마스터',
-  ultimate: '챔피언',
+  champion: '챔피언',
 }
 
 // `battletag` is intentionally not exposed here — this is a pseudonymous

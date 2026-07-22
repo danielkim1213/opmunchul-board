@@ -6,7 +6,7 @@ import platinumImg from './tier_images/6 Platinum.png'
 import diamondImg from './tier_images/5 Diamond.png'
 import masterImg from './tier_images/4 Masters.png'
 import grandmasterImg from './tier_images/3 Grandmaster.png'
-import ultimateImg from './tier_images/2 Champion.png'
+import championImg from './tier_images/2 Champion.png'
 
 export const TIER_IMAGES: Record<TierKey, string> = {
   bronze: bronzeImg,
@@ -16,5 +16,5 @@ export const TIER_IMAGES: Record<TierKey, string> = {
   diamond: diamondImg,
   master: masterImg,
   grandmaster: grandmasterImg,
-  ultimate: ultimateImg,
+  champion: championImg,
 }

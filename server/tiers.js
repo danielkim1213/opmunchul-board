@@ -1,7 +1,6 @@
 // Shared tier vocabulary for board post permission gating (feedback comments,
-// poll votes). Mirrors the OverFast division keys used in overfast.js, kept
-// separate since this is a general "who can participate" concept rather than
-// an OverFast API concern.
+// poll votes). Keys match Overwatch division names; OverFast still reports the
+// top division as "ultimate", which we normalize to "champion" on ingest.
 
 export const TIER_ORDER = [
   'bronze',
@@ -11,7 +10,7 @@ export const TIER_ORDER = [
   'diamond',
   'master',
   'grandmaster',
-  'ultimate',
+  'champion',
 ]
 
 export const TIER_LABEL_KO = {
@@ -22,7 +21,13 @@ export const TIER_LABEL_KO = {
   diamond: '다이아몬드',
   master: '마스터',
   grandmaster: '그랜드마스터',
-  ultimate: '챔피언',
+  champion: '챔피언',
+}
+
+/** Map legacy / API aliases onto the canonical TierKey. */
+function normalizeTierKey(key) {
+  if (key === 'ultimate') return 'champion'
+  return key
 }
 
 // users.rank_label looks like "Diamond IV", "Grandmaster I", "Champion", or
@@ -35,7 +40,7 @@ const LABEL_WORD_TO_TIER = {
   diamond: 'diamond',
   master: 'master',
   grandmaster: 'grandmaster',
-  champion: 'ultimate',
+  champion: 'champion',
 }
 
 /** "Diamond IV" -> "diamond"; "Unranked" (or anything unrecognized) -> null. */
@@ -46,7 +51,7 @@ export function deriveTierKey(rankLabel) {
 }
 
 export function isValidTierKey(key) {
-  return TIER_ORDER.includes(key)
+  return TIER_ORDER.includes(normalizeTierKey(key))
 }
 
 /**
@@ -66,7 +71,10 @@ export function parseAllowedTiers(raw) {
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter(isValidTierKey) : []
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map(normalizeTierKey)
+      .filter((key) => TIER_ORDER.includes(key))
   } catch {
     return []
   }
