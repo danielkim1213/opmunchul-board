@@ -315,7 +315,7 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
           <div className="link-section">
             {link ? (
               <div className="link-done">
-                <div className="verify-badge verify-badge--sm">
+                <div className="verify-badge">
                   <svg viewBox="0 0 24 24" width="26" height="26" fill="none" aria-hidden>
                     <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.8" />
                     <path
