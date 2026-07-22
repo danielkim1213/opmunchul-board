@@ -24,6 +24,7 @@ export default function TierCheckboxes({ value, onChange }: TierCheckboxesProps)
           <label key={tier} className="tier-checkbox">
             <input type="checkbox" checked={value.includes(tier)} onChange={() => toggle(tier)} />
             <TierIcon tier={tier} className="tier-checkbox__img" />
+            <span className="tier-checkbox__label">{tier}</span>
           </label>
         ))}
       </div>
