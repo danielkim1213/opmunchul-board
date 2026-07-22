@@ -3,6 +3,7 @@ import { ApiError } from '../api/auth'
 import { deletePost, votePoll, TIER_LABEL_KO } from '../api/posts'
 import type { PollOption, PollPostDetail as PollPost } from '../api/posts'
 import RankBadge from '../components/RankBadge'
+import TierIcon from '../components/TierIcon'
 
 interface PollPostDetailProps {
   post: PollPost
@@ -114,8 +115,8 @@ export default function PollPostDetail({ post, onBack, onEdit, onDeleted }: Poll
           <span className="tier-chip tier-chip--all">전체</span>
         ) : (
           post.allowedTiers.map((tier) => (
-            <span key={tier} className="tier-chip">
-              {TIER_LABEL_KO[tier]}
+            <span key={tier} className="tier-chip tier-chip--icon" title={TIER_LABEL_KO[tier]}>
+              <TierIcon tier={tier} className="tier-chip__img" />
             </span>
           ))
         )}

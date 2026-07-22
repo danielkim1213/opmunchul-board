@@ -1,5 +1,6 @@
-import { TIER_LABEL_KO, TIER_ORDER } from '../api/posts'
+import { TIER_ORDER } from '../api/posts'
 import type { TierKey } from '../api/posts'
+import TierIcon from '../components/TierIcon'
 
 interface TierCheckboxesProps {
   value: TierKey[]
@@ -22,7 +23,7 @@ export default function TierCheckboxes({ value, onChange }: TierCheckboxesProps)
         {TIER_ORDER.map((tier) => (
           <label key={tier} className="tier-checkbox">
             <input type="checkbox" checked={value.includes(tier)} onChange={() => toggle(tier)} />
-            {TIER_LABEL_KO[tier]}
+            <TierIcon tier={tier} className="tier-checkbox__img" />
           </label>
         ))}
       </div>

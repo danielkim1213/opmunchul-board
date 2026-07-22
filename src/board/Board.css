@@ -490,6 +490,26 @@
   background: rgba(33, 143, 254, 0.1);
 }
 
+.tier-chip--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  line-height: 0;
+}
+
+.tier-chip__img {
+  height: 24px;
+  width: auto;
+  display: block;
+}
+
+.tier-checkbox__img {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+
 .tier-chip--all {
   color: var(--text-dim);
   border-color: var(--card-border);
