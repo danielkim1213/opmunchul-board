@@ -264,3 +264,9 @@ export async function logout(): Promise<void> {
   }
   clearToken()
 }
+
+/** Promote another account to admin. Caller must already be an admin. */
+export async function promoteToAdmin(username: string): Promise<AuthUser> {
+  const { user } = await authedPost<{ user: AuthUser }>('/admin/promote', { username })
+  return user
+}

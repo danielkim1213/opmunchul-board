@@ -3,7 +3,7 @@
 // nullable type-specific columns; comments/votes are gated by allowed_tiers.
 import { randomUUID } from 'node:crypto'
 import db from './db.js'
-import { isAdminKey } from './admins.js'
+import { isAdmin } from './admins.js'
 import { isTierAllowed, isValidTierKey, parseAllowedTiers, TIER_ORDER } from './tiers.js'
 
 const TITLE_MAX = 100
@@ -57,14 +57,14 @@ const findPostRow = db.prepare('SELECT * FROM posts WHERE id = ?')
 // are public, and this is a pseudonymous board, so only `username` (the
 // account handle the user picked) is ever shown to other members.
 const listPostsRaw = db.prepare(`
-  SELECT p.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
   WHERE (? IS NULL OR p.type = ?)
   ORDER BY p.is_notice DESC, p.created_at DESC
 `)
 const findPostWithAuthor = db.prepare(`
-  SELECT p.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
   WHERE p.id = ?
@@ -110,7 +110,7 @@ const findComment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
 // so rendering a thread costs one query instead of 2 per comment (N+1).
 const listComments = db.prepare(`
   SELECT
-    c.*, u.username, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    c.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
     (SELECT COUNT(*) FROM post_comment_upvotes v WHERE v.comment_id = c.id) AS upvote_count,
     EXISTS(
       SELECT 1 FROM post_comment_upvotes v
@@ -155,9 +155,7 @@ function parseMostHeroes(raw) {
 function toPublicAuthor(row) {
   return {
     username: row.username,
-    // Post rows carry the author key as author_username_key; comment rows as
-    // username_key.
-    isAdmin: isAdminKey(row.author_username_key ?? row.username_key),
+    isAdmin: isAdmin(row),
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     roleLabel: roleLabelOf(row.rank_role),
@@ -177,7 +175,7 @@ function pollSummary(postId, viewerKey) {
 }
 
 /** Shared summary fields for both list rows and single-post detail. */
-function toPublicPostBase(row, viewerRankLabel, viewerKey) {
+function toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
   const allowedTiers = parseAllowedTiers(row.allowed_tiers)
   const isMine = viewerKey ? row.author_username_key === viewerKey : false
   return {
@@ -192,12 +190,12 @@ function toPublicPostBase(row, viewerRankLabel, viewerKey) {
     updatedAt: row.updated_at ?? null,
     isMine,
     /** Admins may delete any post (moderation); editing stays author-only. */
-    canDelete: isMine || isAdminKey(viewerKey),
+    canDelete: isMine || viewerIsAdmin,
   }
 }
 
-function toPublicPostSummary(row, viewerRankLabel, viewerKey) {
-  const base = toPublicPostBase(row, viewerRankLabel, viewerKey)
+function toPublicPostSummary(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
+  const base = toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin)
   if (row.type === 'poll') {
     const { totalVotes, options } = pollSummary(row.id, viewerKey)
     return { ...base, optionCount: options.length, voteCount: totalVotes }
@@ -211,8 +209,8 @@ function toPublicPostSummary(row, viewerRankLabel, viewerKey) {
   }
 }
 
-function toPublicPostDetail(row, viewerRankLabel, viewerKey) {
-  const base = toPublicPostBase(row, viewerRankLabel, viewerKey)
+function toPublicPostDetail(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
+  const base = toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin)
   if (row.type === 'tip') {
     return { ...base, body: row.body, commentCount: countComments.get(row.id).n }
   }
@@ -232,7 +230,7 @@ function toPublicPostDetail(row, viewerRankLabel, viewerKey) {
   return { ...base, options, totalVotes, myOptionId }
 }
 
-function toPublicComment(row, viewerKey) {
+function toPublicComment(row, viewerKey, viewerIsAdmin = false) {
   return {
     id: row.id,
     parentId: row.parent_id,
@@ -251,7 +249,7 @@ function toPublicComment(row, viewerKey) {
           ? Boolean(hasUpvoted.get(row.id, viewerKey))
           : false,
     isMine: viewerKey ? row.username_key === viewerKey : false,
-    canDelete: (viewerKey ? row.username_key === viewerKey : false) || isAdminKey(viewerKey),
+    canDelete: (viewerKey ? row.username_key === viewerKey : false) || viewerIsAdmin,
   }
 }
 
@@ -277,7 +275,10 @@ export function registerPostRoutes(app, { authenticate }) {
     const rows = listPostsRaw.all(typeFilter, typeFilter)
     const viewerRankLabel = auth?.user.rank_label ?? null
     const viewerKey = auth?.user.username_key ?? null
-    return res.json({ posts: rows.map((r) => toPublicPostSummary(r, viewerRankLabel, viewerKey)) })
+    const viewerIsAdmin = isAdmin(auth?.user)
+    return res.json({
+      posts: rows.map((r) => toPublicPostSummary(r, viewerRankLabel, viewerKey, viewerIsAdmin)),
+    })
   })
 
   app.get('/api/posts/:id', (req, res) => {
@@ -285,7 +286,12 @@ export function registerPostRoutes(app, { authenticate }) {
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
 
     const auth = authenticate(req)
-    const post = toPublicPostDetail(row, auth?.user.rank_label ?? null, auth?.user.username_key ?? null)
+    const post = toPublicPostDetail(
+      row,
+      auth?.user.rank_label ?? null,
+      auth?.user.username_key ?? null,
+      isAdmin(auth?.user),
+    )
     return res.json({ post })
   })
 
@@ -304,7 +310,7 @@ export function registerPostRoutes(app, { authenticate }) {
 
     // Notice posts are pinned to the top of the list — admin only.
     const isNotice = Boolean(req.body?.isNotice)
-    if (isNotice && !isAdminKey(auth.user.username_key)) {
+    if (isNotice && !isAdmin(auth.user)) {
       return res.status(403).json({ error: 'ADMIN_ONLY' })
     }
     const noticeFlag = isNotice ? 1 : 0
@@ -387,7 +393,7 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const row = findPostWithAuthor.get(id)
     return res.status(201).json({
-      post: toPublicPostDetail(row, auth.user.rank_label, auth.user.username_key),
+      post: toPublicPostDetail(row, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
     })
   })
 
@@ -444,7 +450,7 @@ export function registerPostRoutes(app, { authenticate }) {
     let noticeFlag = row.is_notice ? 1 : 0
     if (req.body?.isNotice !== undefined) {
       const wantNotice = Boolean(req.body.isNotice)
-      if (wantNotice !== Boolean(row.is_notice) && !isAdminKey(auth.user.username_key)) {
+      if (wantNotice !== Boolean(row.is_notice) && !isAdmin(auth.user)) {
         return res.status(403).json({ error: 'ADMIN_ONLY' })
       }
       noticeFlag = wantNotice ? 1 : 0
@@ -465,7 +471,7 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const updated = findPostWithAuthor.get(row.id)
     return res.json({
-      post: toPublicPostDetail(updated, auth.user.rank_label, auth.user.username_key),
+      post: toPublicPostDetail(updated, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
     })
   })
 
@@ -476,7 +482,7 @@ export function registerPostRoutes(app, { authenticate }) {
     const row = findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
     // Admins may delete any post (moderation power).
-    if (row.author_username_key !== auth.user.username_key && !isAdminKey(auth.user.username_key)) {
+    if (row.author_username_key !== auth.user.username_key && !isAdmin(auth.user)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 
@@ -493,8 +499,9 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const auth = authenticate(req)
     const viewerKey = auth?.user.username_key ?? null
+    const viewerIsAdmin = isAdmin(auth?.user)
     const rows = listComments.all(viewerKey, post.id)
-    const flat = rows.map((r) => ({ ...toPublicComment(r, viewerKey), replies: [] }))
+    const flat = rows.map((r) => ({ ...toPublicComment(r, viewerKey, viewerIsAdmin), replies: [] }))
 
     // Builds the reply tree at arbitrary depth in one pass (rows are in
     // created_at order, and a parent is always created before its replies).
@@ -572,13 +579,17 @@ export function registerPostRoutes(app, { authenticate }) {
       upvote_count: 0,
       upvoted_by_me: 0,
       username: auth.user.username,
+      role: auth.user.role,
       rank_label: auth.user.rank_label,
       rank_icon: auth.user.rank_icon,
       rank_role: auth.user.rank_role,
       most_heroes: auth.user.most_heroes,
     }
     return res.status(201).json({
-      comment: { ...toPublicComment(withAuthor, auth.user.username_key), replies: [] },
+      comment: {
+        ...toPublicComment(withAuthor, auth.user.username_key, isAdmin(auth.user)),
+        replies: [],
+      },
     })
   })
 
@@ -602,12 +613,15 @@ export function registerPostRoutes(app, { authenticate }) {
     const withAuthor = {
       ...row,
       username: auth.user.username,
+      role: auth.user.role,
       rank_label: auth.user.rank_label,
       rank_icon: auth.user.rank_icon,
       rank_role: auth.user.rank_role,
       most_heroes: auth.user.most_heroes,
     }
-    return res.json({ comment: toPublicComment(withAuthor, auth.user.username_key) })
+    return res.json({
+      comment: toPublicComment(withAuthor, auth.user.username_key, isAdmin(auth.user)),
+    })
   })
 
   app.delete('/api/posts/comments/:id', (req, res) => {
@@ -617,7 +631,7 @@ export function registerPostRoutes(app, { authenticate }) {
     const comment = findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
     // Admins may delete any comment (moderation power).
-    if (comment.username_key !== auth.user.username_key && !isAdminKey(auth.user.username_key)) {
+    if (comment.username_key !== auth.user.username_key && !isAdmin(auth.user)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 

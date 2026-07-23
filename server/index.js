@@ -20,7 +20,7 @@ import {
   isBlizzardConfigured,
 } from './blizzard.js'
 import { registerPostRoutes } from './posts.js'
-import { isAdminKey } from './admins.js'
+import { isAdmin } from './admins.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
@@ -90,7 +90,7 @@ function isValidUsername(username) {
 const findUser = db.prepare(`
   SELECT
     username_key, username, password_hash, battletag, battletag_key, blizzard_id,
-    rank_label, rank_icon, rank_role, most_heroes, avatar, created_at, rank_fetched_at
+    role, rank_label, rank_icon, rank_role, most_heroes, avatar, created_at, rank_fetched_at
   FROM users
   WHERE username_key = ?
 `)
@@ -103,8 +103,11 @@ const findOtherUserByBattletag = db.prepare(
 const insertUser = db.prepare(`
   INSERT INTO users (
     username_key, username, password_hash, battletag, battletag_key, blizzard_id,
-    rank_label, rank_icon, rank_role, most_heroes, avatar, created_at, rank_fetched_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    role, rank_label, rank_icon, rank_role, most_heroes, avatar, created_at, rank_fetched_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+const promoteUserRole = db.prepare(`
+  UPDATE users SET role = 'admin' WHERE username_key = ?
 `)
 const updateRankDetails = db.prepare(`
   UPDATE users
@@ -169,7 +172,7 @@ function toPublicUser(row) {
   return {
     username: row.username,
     battletag: row.battletag,
-    isAdmin: isAdminKey(row.username_key),
+    isAdmin: isAdmin(row),
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     rankRole: row.rank_role ?? null,
@@ -489,6 +492,7 @@ app.post('/api/auth/register', rateLimit('register', 10, 60_000), asyncRoute(asy
       link.battletag,
       link.battletag_key,
       link.blizzard_id ?? null,
+      'user',
       profile.rankLabel ?? 'Unranked',
       profile.rankIcon ?? null,
       profile.rankRole ?? null,
@@ -559,6 +563,31 @@ app.post('/api/auth/logout', (req, res) => {
   const auth = authenticate(req)
   if (auth) deleteSession.run(auth.token)
   return res.json({ ok: true })
+})
+
+/* ------------------------------------------------------------------ *
+ * Admin: promote another user to role=admin
+ * ------------------------------------------------------------------ */
+app.post('/api/admin/promote', (req, res) => {
+  const auth = authenticate(req)
+  if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+  if (!isAdmin(auth.user)) return res.status(403).json({ error: 'ADMIN_ONLY' })
+
+  const username = String(req.body?.username ?? '').trim()
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: 'INVALID_USERNAME' })
+  }
+
+  const targetKey = normalizeUsername(username)
+  const target = findUser.get(targetKey)
+  if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+
+  if (!isAdmin(target)) {
+    promoteUserRole.run(targetKey)
+  }
+
+  const row = findUser.get(targetKey)
+  return res.json({ user: toPublicUser(row) })
 })
 
 /* ------------------------------------------------------------------ *

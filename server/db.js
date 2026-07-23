@@ -46,6 +46,7 @@ db.exec(`
     battletag     TEXT NOT NULL,
     battletag_key TEXT NOT NULL UNIQUE,
     blizzard_id   TEXT,
+    role          TEXT NOT NULL DEFAULT 'user',
     rank_label    TEXT,
     rank_icon     TEXT,
     rank_role     TEXT,
@@ -160,6 +161,11 @@ addColumnIfMissing('post_comments', 'updated_at', 'updated_at INTEGER')
 
 // Notice posts (admin-only) are pinned to the top of the board list.
 addColumnIfMissing('posts', 'is_notice', 'is_notice INTEGER NOT NULL DEFAULT 0')
+
+// Board role (user | admin). Replaces the old ADMIN_USERNAMES nickname check.
+addColumnIfMissing('users', 'role', "role TEXT NOT NULL DEFAULT 'user'")
+// Seed the initial admin account (not a guessable default like "admin").
+db.exec(`UPDATE users SET role = 'admin' WHERE username_key = 'kyw4091';`)
 
 // team_side terminology moved from attack/defense to red/blue — remap any
 // rows written under the old scheme so old feedback posts still render.
