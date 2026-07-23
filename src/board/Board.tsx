@@ -107,7 +107,10 @@ function PostEditor({ postId, isAdmin }: { postId: string; isAdmin: boolean }) {
 export default function Board({ isAdmin }: BoardProps) {
   const [view, setView] = useState<View>(() => parseHash(window.location.hash))
   const [filter, setFilter] = useState<Filter>('all')
+  const [page, setPage] = useState(1)
   const [posts, setPosts] = useState<PostSummary[]>([])
+  const [total, setTotal] = useState(0)
+  const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -117,18 +120,37 @@ export default function Board({ isAdmin }: BoardProps) {
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
 
-  const loadPosts = useCallback((activeFilter: Filter) => {
+  const loadPosts = useCallback((activeFilter: Filter, activePage: number) => {
     setLoading(true)
     setError(null)
-    fetchPosts(activeFilter === 'all' ? undefined : activeFilter)
-      .then(setPosts)
+    fetchPosts({
+      type: activeFilter === 'all' ? undefined : activeFilter,
+      page: activePage,
+    })
+      .then((result) => {
+        setPosts(result.posts)
+        setTotal(result.total)
+        setTotalPages(result.totalPages)
+        // Server may clamp page when past the last page (e.g. after deletes).
+        if (result.page !== activePage) setPage(result.page)
+      })
       .catch(() => setError('게시글을 불러오지 못했습니다.'))
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    if (view.name === 'list') loadPosts(filter)
-  }, [view.name, filter, loadPosts])
+    if (view.name === 'list') loadPosts(filter, page)
+  }, [view.name, filter, page, loadPosts])
+
+  function handleFilterChange(next: Filter) {
+    setFilter(next)
+    setPage(1)
+  }
+
+  function handlePageChange(next: number) {
+    setPage(next)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   if (view.name === 'detail') {
     return (
@@ -161,7 +183,11 @@ export default function Board({ isAdmin }: BoardProps) {
       loading={loading}
       error={error}
       filter={filter}
-      onFilterChange={setFilter}
+      page={page}
+      totalPages={totalPages}
+      total={total}
+      onFilterChange={handleFilterChange}
+      onPageChange={handlePageChange}
       onSelect={(postId) => navigate({ name: 'detail', postId })}
       onCreate={() => navigate({ name: 'create' })}
     />

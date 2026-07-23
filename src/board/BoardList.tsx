@@ -22,7 +22,11 @@ interface BoardListProps {
   loading: boolean
   error: string | null
   filter: Filter
+  page: number
+  totalPages: number
+  total: number
   onFilterChange: (filter: Filter) => void
+  onPageChange: (page: number) => void
   onSelect: (postId: string) => void
   onCreate: () => void
 }
@@ -32,10 +36,16 @@ export default function BoardList({
   loading,
   error,
   filter,
+  page,
+  totalPages,
+  total,
   onFilterChange,
+  onPageChange,
   onSelect,
   onCreate,
 }: BoardListProps) {
+  const showPager = totalPages > 1
+
   return (
     <div className="board-list">
       <div className="board-list__header">
@@ -124,6 +134,31 @@ export default function BoardList({
           )
         })}
       </ul>
+
+      {showPager && (
+        <nav className="board-list__pager" aria-label="게시글 페이지">
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            disabled={loading || page <= 1}
+            onClick={() => onPageChange(page - 1)}
+          >
+            이전
+          </button>
+          <span className="board-list__pager-info">
+            {page} / {totalPages}
+            <span className="board-list__pager-total"> · 전체 {total}개</span>
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            disabled={loading || page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
+          >
+            다음
+          </button>
+        </nav>
+      )}
     </div>
   )
 }

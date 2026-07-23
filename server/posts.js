@@ -13,6 +13,8 @@ const COMMENT_MAX = 500
 const POLL_OPTION_MAX = 40
 const POLL_MIN_OPTIONS = 2
 const POLL_MAX_OPTIONS = 5
+const LIST_DEFAULT_LIMIT = 20
+const LIST_MAX_LIMIT = 50
 
 const POST_TYPES = ['tip', 'feedback', 'poll']
 
@@ -56,12 +58,43 @@ const findPostRow = db.prepare('SELECT * FROM posts WHERE id = ?')
 // Author's battletag is intentionally not selected here — posts/comments
 // are public, and this is a pseudonymous board, so only `username` (the
 // account handle the user picked) is ever shown to other members.
-const listPostsRaw = db.prepare(`
-  SELECT p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
-  FROM posts p
+// Page first (LIMIT/OFFSET), then aggregate only those rows — avoids N+1
+// and keeps correlated COUNTs bounded to one page (see idx_posts_*).
+const listPostsPaged = db.prepare(`
+  WITH paged_posts AS (
+    SELECT p.*
+    FROM posts p
+    WHERE (? IS NULL OR p.type = ?)
+    ORDER BY p.is_notice DESC, p.created_at DESC, p.id DESC
+    LIMIT ? OFFSET ?
+  )
+  SELECT
+    p.*,
+    u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    CASE
+      WHEN p.type IN ('tip', 'feedback') THEN (
+        SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.id
+      )
+      ELSE 0
+    END AS comment_count,
+    CASE
+      WHEN p.type = 'poll' THEN (
+        SELECT COUNT(*) FROM post_poll_options o WHERE o.post_id = p.id
+      )
+      ELSE 0
+    END AS option_count,
+    CASE
+      WHEN p.type = 'poll' THEN (
+        SELECT COUNT(*) FROM post_poll_votes v WHERE v.post_id = p.id
+      )
+      ELSE 0
+    END AS vote_count
+  FROM paged_posts p
   JOIN users u ON u.username_key = p.author_username_key
-  WHERE (? IS NULL OR p.type = ?)
-  ORDER BY p.is_notice DESC, p.created_at DESC
+  ORDER BY p.is_notice DESC, p.created_at DESC, p.id DESC
+`)
+const countPosts = db.prepare(`
+  SELECT COUNT(*) AS n FROM posts WHERE (? IS NULL OR type = ?)
 `)
 const findPostWithAuthor = db.prepare(`
   SELECT p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
@@ -196,13 +229,14 @@ function toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin = false
 
 function toPublicPostSummary(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
   const base = toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin)
+  // Aggregates come from listPostsPaged — no per-row queries / myOptionId
+  // (list UI only shows optionCount + voteCount).
   if (row.type === 'poll') {
-    const { totalVotes, options } = pollSummary(row.id, viewerKey)
-    return { ...base, optionCount: options.length, voteCount: totalVotes }
+    return { ...base, optionCount: row.option_count ?? 0, voteCount: row.vote_count ?? 0 }
   }
   return {
     ...base,
-    commentCount: countComments.get(row.id).n,
+    commentCount: row.comment_count ?? 0,
     ...(row.type === 'feedback'
       ? { youtubeId: row.youtube_id, hero: row.hero, teamSide: row.team_side, replayCode: row.replay_code }
       : {}),
@@ -272,12 +306,29 @@ export function registerPostRoutes(app, { authenticate }) {
   app.get('/api/posts', (req, res) => {
     const auth = authenticate(req)
     const typeFilter = POST_TYPES.includes(req.query.type) ? req.query.type : null
-    const rows = listPostsRaw.all(typeFilter, typeFilter)
+
+    let limit = Number.parseInt(String(req.query.limit ?? LIST_DEFAULT_LIMIT), 10)
+    if (!Number.isFinite(limit) || limit < 1) limit = LIST_DEFAULT_LIMIT
+    if (limit > LIST_MAX_LIMIT) limit = LIST_MAX_LIMIT
+
+    let page = Number.parseInt(String(req.query.page ?? '1'), 10)
+    if (!Number.isFinite(page) || page < 1) page = 1
+
+    const total = countPosts.get(typeFilter, typeFilter).n
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit)
+    if (totalPages > 0 && page > totalPages) page = totalPages
+    const offset = (page - 1) * limit
+
+    const rows = listPostsPaged.all(typeFilter, typeFilter, limit, offset)
     const viewerRankLabel = auth?.user.rank_label ?? null
     const viewerKey = auth?.user.username_key ?? null
     const viewerIsAdmin = isAdmin(auth?.user)
     return res.json({
       posts: rows.map((r) => toPublicPostSummary(r, viewerRankLabel, viewerKey, viewerIsAdmin)),
+      page,
+      limit,
+      total,
+      totalPages,
     })
   })
 

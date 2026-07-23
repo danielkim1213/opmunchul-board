@@ -309,6 +309,27 @@
   flex-shrink: 0;
 }
 
+.board-list__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 4px 0 8px;
+}
+
+.board-list__pager-info {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  min-width: 5.5rem;
+  text-align: center;
+}
+
+.board-list__pager-total {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
 /* ================= Post create ================= */
 .post-create {
   display: flex;
@@ -1214,6 +1235,14 @@
 
   .board-list__filters {
     justify-content: center;
+  }
+
+  .board-list__pager {
+    gap: 10px;
+  }
+
+  .board-list__pager-total {
+    display: none;
   }
 
   .post-card {

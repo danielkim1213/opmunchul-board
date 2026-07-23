@@ -195,11 +195,20 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-export async function fetchPosts(type?: PostType): Promise<PostSummary[]> {
-  const query = type ? `?type=${encodeURIComponent(type)}` : ''
+export async function fetchPosts(options?: {
+  type?: PostType
+  page?: number
+  limit?: number
+}): Promise<{ posts: PostSummary[]; page: number; limit: number; total: number; totalPages: number }> {
+  const params = new URLSearchParams()
+  if (options?.type) params.set('type', options.type)
+  if (options?.page != null) params.set('page', String(options.page))
+  if (options?.limit != null) params.set('limit', String(options.limit))
+  const query = params.toString() ? `?${params}` : ''
   const res = await fetch(apiUrl(`/posts${query}`), { headers: authHeaders() })
-  const { posts } = await handle<{ posts: PostSummary[] }>(res)
-  return posts
+  return handle<{ posts: PostSummary[]; page: number; limit: number; total: number; totalPages: number }>(
+    res,
+  )
 }
 
 export async function fetchPost(id: string): Promise<PostDetail> {

@@ -172,4 +172,19 @@ db.exec(`UPDATE users SET role = 'admin' WHERE username_key = 'kyw4091';`)
 db.exec(`UPDATE posts SET team_side = 'red' WHERE team_side = 'attack';`)
 db.exec(`UPDATE posts SET team_side = 'blue' WHERE team_side = 'defense';`)
 
+// Board list: page posts first (ORDER BY + LIMIT), then aggregate only those
+// rows. Without these indexes each COUNT(*) can devolve into a table scan.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_posts_list
+    ON posts(is_notice DESC, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_posts_type_list
+    ON posts(type, is_notice DESC, created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_comments_post
+    ON post_comments(post_id);
+  CREATE INDEX IF NOT EXISTS idx_poll_options_post
+    ON post_poll_options(post_id);
+  CREATE INDEX IF NOT EXISTS idx_poll_votes_post
+    ON post_poll_votes(post_id);
+`)
+
 export default db
