@@ -90,20 +90,20 @@ export default function App() {
       ) : !user ? (
         <main className="landing">
           <section className="hero">
-            <p className="hero__kicker">FOR OVERWATCH 2 PLAYERS</p>
+            <p className="hero__kicker">오버워치 2 플레이 리뷰 커뮤니티</p>
             <h1 className="hero__title">
-              Blizzard 계정 인증으로
+              내 플레이를 올리고,
               <br />
-              시작하는 진짜 옵치 커뮤니티
+              같이 답을 찾아보세요.
             </h1>
             <p className="hero__desc">
-              Blizzard OAuth 계정 연동으로 배틀태그를 안전하게 인증!
-              티어및 포지션만 배지로 보여줍니다. (세포지중 최고티어, 프비공시 unranked로 표시)
+              팁을 나누고, 투표로 의견을 묻고, 영상의 필요한 순간에
+              직접 피드백을 남길 수 있습니다.
             </p>
             <ul className="hero__points">
-              <li>원하는 아이디로 가입 + 중복확인</li>
-              <li>Blizzard OAuth 연동으로 배틀태그 인증</li>
-              <li>Blizzard 전적 기반 티어 배지 자동 부여</li>
+              <li>Blizzard 계정으로 플레이어 인증</li>
+              <li>원하는 닉네임으로 자유롭게 활동</li>
+              <li>인증된 티어를 참고한 구체적인 피드백</li>
             </ul>
           </section>
           <section className="auth-panel">
@@ -117,7 +117,7 @@ export default function App() {
       )}
 
       <footer className="footer">
-        옵문철 게시판 · 비공식 팬 사이트 · 전적 데이터 제공:{' '}
+        옵문철 · 오버워치 2 비공식 커뮤니티 · 전적 데이터:{' '}
         <a href="https://overfast-api.tekrop.fr/" target="_blank" rel="noreferrer">
           OverFast API
         </a>
