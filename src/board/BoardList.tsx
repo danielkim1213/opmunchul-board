@@ -6,15 +6,15 @@ type Filter = PostType | 'all'
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all', label: '전체' },
-  { key: 'tip', label: '💡 팁' },
-  { key: 'feedback', label: '🎬 피드백' },
-  { key: 'poll', label: '🗳 투표' },
+  { key: 'tip', label: '팁' },
+  { key: 'feedback', label: '피드백' },
+  { key: 'poll', label: '투표' },
 ]
 
-const TYPE_BADGE: Record<PostType, { emoji: string; label: string }> = {
-  tip: { emoji: '💡', label: '팁' },
-  feedback: { emoji: '🎬', label: '피드백' },
-  poll: { emoji: '🗳', label: '투표' },
+const TYPE_LABEL: Record<PostType, string> = {
+  tip: '팁',
+  feedback: '피드백',
+  poll: '투표',
 }
 
 interface BoardListProps {
@@ -64,7 +64,7 @@ export default function BoardList({
 
       <ul className="board-list__cards">
         {posts.map((post) => {
-          const badge = TYPE_BADGE[post.type]
+          const typeLabel = TYPE_LABEL[post.type]
           return (
             <li key={post.id}>
               <button
@@ -82,16 +82,16 @@ export default function BoardList({
                 )}
                 <div className="post-card__body">
                   <div className="post-card__top">
-                    {post.isNotice && <span className="notice-badge">📌 공지</span>}
+                    {post.isNotice && <span className="notice-badge">공지</span>}
                     <span className={`post-card__type post-card__type--${post.type}`}>
-                      {badge.emoji} {badge.label}
+                      {typeLabel}
                     </span>
                     {post.allowedTiers.length > 0 && (
                       <span
                         className="post-card__lock"
                         title={post.allowedTiers.map((t) => TIER_LABEL_KO[t]).join(', ')}
                       >
-                        🔒 {post.allowedTiers.length}개 티어 제한
+                        {post.allowedTiers.length}개 티어 제한
                         {!post.viewerEligible && ' · 참여 불가'}
                       </span>
                     )}
@@ -112,10 +112,10 @@ export default function BoardList({
                     </span>
                     {post.type === 'poll' ? (
                       <span className="post-card__stat">
-                        🗳 {post.optionCount}개 선택지 · {post.voteCount}표
+                        {post.optionCount}개 선택지 · {post.voteCount}표
                       </span>
                     ) : (
-                      <span className="post-card__stat">💬 {post.commentCount}</span>
+                      <span className="post-card__stat">댓글 {post.commentCount}</span>
                     )}
                   </div>
                 </div>
