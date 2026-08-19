@@ -86,6 +86,7 @@ const DIVISION_ORDER = [
   'silver',
   'gold',
   'platinum',
+  'emerald',
   'diamond',
   'master',
   'grandmaster',
@@ -97,6 +98,7 @@ const DIVISION_LABEL = {
   silver: 'Silver',
   gold: 'Gold',
   platinum: 'Platinum',
+  emerald: 'Emerald',
   diamond: 'Diamond',
   master: 'Master',
   grandmaster: 'Grandmaster',
@@ -124,6 +126,7 @@ export function getBestRank(summary) {
       const rank = roles[role]
       if (!rank || !rank.division) continue
       const division = normalizeDivision(rank.division)
+      if (!DIVISION_ORDER.includes(division)) continue
       const score = DIVISION_ORDER.indexOf(division) * 10 + (5 - rank.tier)
       const bestScore = best
         ? DIVISION_ORDER.indexOf(best.division) * 10 + (5 - best.tier)

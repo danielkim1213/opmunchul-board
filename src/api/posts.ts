@@ -19,6 +19,7 @@ export type TierKey =
   | 'silver'
   | 'gold'
   | 'platinum'
+  | 'emerald'
   | 'diamond'
   | 'master'
   | 'grandmaster'
@@ -29,6 +30,7 @@ export const TIER_ORDER: TierKey[] = [
   'silver',
   'gold',
   'platinum',
+  'emerald',
   'diamond',
   'master',
   'grandmaster',
@@ -40,6 +42,7 @@ export const TIER_LABEL_KO: Record<TierKey, string> = {
   silver: '실버',
   gold: '골드',
   platinum: '플래티넘',
+  emerald: '에메랄드',
   diamond: '다이아몬드',
   master: '마스터',
   grandmaster: '그랜드마스터',

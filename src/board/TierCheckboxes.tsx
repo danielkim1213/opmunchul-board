@@ -8,7 +8,7 @@ interface TierCheckboxesProps {
 }
 
 /**
- * Arbitrary multi-select of the 8 rank tiers gating participation on a
+ * Arbitrary multi-select of the 9 rank tiers gating participation on a
  * feedback/poll post. An empty selection means "unrestricted" (anyone may
  * participate) — this is called out in the helper text below the grid.
  */
