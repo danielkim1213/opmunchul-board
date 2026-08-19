@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import AuthFlow from './auth/AuthFlow'
 import { ApiError, applyBlizzardLink, fetchMe, linkBlizzard, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
@@ -10,12 +10,16 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [restoring, setRestoring] = useState(true)
   const [changingAccount, setChangingAccount] = useState(false)
+  const changeAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     fetchMe()
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setRestoring(false))
+    return () => {
+      changeAbortRef.current?.abort()
+    }
   }, [])
 
   async function handleLogout() {
@@ -24,18 +28,24 @@ export default function App() {
   }
 
   async function handleChangeBlizzard() {
+    if (changingAccount) {
+      changeAbortRef.current?.abort()
+      return
+    }
+    const ac = new AbortController()
+    changeAbortRef.current = ac
     setChangingAccount(true)
     try {
       // force: true bounces through Battle.net logout first, so the
       // credential screen shows up again instead of silently reusing
       // whichever account is already signed in on this browser.
-      const link = await linkBlizzard({ force: true })
+      const link = await linkBlizzard({ force: true, signal: ac.signal })
       const updated = await applyBlizzardLink(link.state)
       setUser(updated)
       window.alert(`배틀태그가 ${updated.battletag} 로 변경되었습니다.`)
     } catch (err) {
       if (err instanceof ApiError && err.code === 'LINK_CANCELLED') {
-        // User closed the popup — nothing to report.
+        // User cancelled from the UI — nothing to report.
       } else if (err instanceof ApiError && err.code === 'BATTLETAG_TAKEN') {
         window.alert('이미 다른 계정에 연동된 배틀태그입니다.')
       } else if (err instanceof ApiError && err.code === 'POPUP_BLOCKED') {
@@ -44,6 +54,7 @@ export default function App() {
         window.alert('배틀태그 변경에 실패했습니다. 다시 시도해 주세요.')
       }
     } finally {
+      if (changeAbortRef.current === ac) changeAbortRef.current = null
       setChangingAccount(false)
     }
   }
@@ -69,12 +80,8 @@ export default function App() {
               mostHeroes={user.mostHeroes}
               bracketed={false}
             />
-            <button
-              className="btn btn--ghost btn--small"
-              onClick={handleChangeBlizzard}
-              disabled={changingAccount}
-            >
-              {changingAccount ? '변경 중...' : '배틀태그 변경'}
+            <button className="btn btn--ghost btn--small" onClick={handleChangeBlizzard}>
+              {changingAccount ? '변경 취소' : '배틀태그 변경'}
             </button>
             <button className="btn btn--ghost btn--small" onClick={handleLogout}>
               로그아웃

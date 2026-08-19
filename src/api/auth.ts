@@ -144,70 +144,97 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * user who linked the wrong account gets the credential prompt again
  * instead of silently reusing whatever Battle.net session is active in
  * their browser.
+ *
+ * Do not treat `popup.closed` as cancellation. Battle.net serves
+ * `Cross-Origin-Opener-Policy: same-origin`, which severs the opener
+ * relationship as soon as the popup lands on battle.net — the handle then
+ * reports `closed === true` even while the login window is still on screen.
+ * Success is detected only via `/auth/blizzard/poll` (and an optional abort
+ * signal if the user cancels from our UI).
  */
-export async function linkBlizzard(options: { force?: boolean } = {}): Promise<BlizzardLink> {
+export async function linkBlizzard(
+  options: { force?: boolean; signal?: AbortSignal } = {},
+): Promise<BlizzardLink> {
   const query = options.force ? '?force=1' : ''
   const { state, authorizeUrl } = await get<{ state: string; authorizeUrl: string }>(
     `/auth/blizzard/start${query}`,
   )
 
+  if (options.signal?.aborted) {
+    throw new ApiError(0, 'LINK_CANCELLED')
+  }
+
   const popup = window.open(
     authorizeUrl,
-    'blizzard-oauth',
+    `blizzard-oauth-${state.slice(0, 12)}`,
     'width=520,height=720,menubar=no,toolbar=no',
   )
   if (!popup) {
     throw new ApiError(0, 'POPUP_BLOCKED')
   }
+  try {
+    popup.focus()
+  } catch {
+    // COOP may already have severed the handle; the popup can still be visible.
+  }
 
-  const deadline = Date.now() + 1000 * 60 * 10
-  let popupClosedAt: number | null = null
-
-  while (Date.now() < deadline) {
-    await delay(1500)
-
-    let result: PollResult
+  const closePopup = () => {
     try {
-      result = await get<PollResult>(`/auth/blizzard/poll?state=${encodeURIComponent(state)}`)
+      popup.close()
     } catch {
-      continue
-    }
-
-    if (result.status === 'linked') {
-      popup.close()
-      return {
-        state,
-        battletag: result.battletag,
-        rankLabel: result.rankLabel,
-        rankIcon: result.rankIcon,
-        rankRole: result.rankRole,
-        roleLabel: result.roleLabel,
-        mostHeroes: result.mostHeroes ?? [],
-        avatar: result.avatar,
-        title: result.title,
-      }
-    }
-    if (result.status === 'error') {
-      popup.close()
-      throw new ApiError(502, 'LINK_FAILED', result.message)
-    }
-    if (result.status === 'expired' || result.status === 'unknown') {
-      popup.close()
-      throw new ApiError(400, 'LINK_EXPIRED')
-    }
-
-    // Still pending — if the user closed the popup without finishing, give up.
-    if (popup.closed) {
-      if (popupClosedAt === null) {
-        popupClosedAt = Date.now()
-      } else if (Date.now() - popupClosedAt > 2500) {
-        throw new ApiError(0, 'LINK_CANCELLED')
-      }
+      // ignore — a COOP-severed handle cannot be closed from the opener
     }
   }
 
-  popup.close()
-  throw new ApiError(408, 'LINK_TIMEOUT')
+  const onAbort = () => closePopup()
+  options.signal?.addEventListener('abort', onAbort)
+
+  const deadline = Date.now() + 1000 * 60 * 10
+
+  try {
+    while (Date.now() < deadline) {
+      if (options.signal?.aborted) {
+        throw new ApiError(0, 'LINK_CANCELLED')
+      }
+
+      let result: PollResult | null = null
+      try {
+        result = await get<PollResult>(`/auth/blizzard/poll?state=${encodeURIComponent(state)}`)
+      } catch {
+        result = null
+      }
+
+      if (result?.status === 'linked') {
+        closePopup()
+        return {
+          state,
+          battletag: result.battletag,
+          rankLabel: result.rankLabel,
+          rankIcon: result.rankIcon,
+          rankRole: result.rankRole,
+          roleLabel: result.roleLabel,
+          mostHeroes: result.mostHeroes ?? [],
+          avatar: result.avatar,
+          title: result.title,
+        }
+      }
+      if (result?.status === 'error') {
+        closePopup()
+        throw new ApiError(502, 'LINK_FAILED', result.message)
+      }
+      if (result?.status === 'expired' || result?.status === 'unknown') {
+        closePopup()
+        throw new ApiError(400, 'LINK_EXPIRED')
+      }
+
+      await delay(1500)
+    }
+
+    closePopup()
+    throw new ApiError(408, 'LINK_TIMEOUT')
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 export async function register(

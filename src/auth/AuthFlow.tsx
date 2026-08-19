@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ApiError,
@@ -36,8 +36,16 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
 
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const linkAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      linkAbortRef.current?.abort()
+    }
+  }, [])
 
   function switchMode(next: Mode) {
+    linkAbortRef.current?.abort()
     setMode(next)
     setPassword('')
     setConfirmPassword('')
@@ -73,30 +81,42 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
   }
 
   async function handleLink(force = false) {
+    linkAbortRef.current?.abort()
+    const ac = new AbortController()
+    linkAbortRef.current = ac
+    const previous = link
     setLinking(true)
     setFormError(null)
+    if (force) setLink(null)
     try {
-      const result = await linkBlizzard({ force })
+      const result = await linkBlizzard({ force, signal: ac.signal })
       setLink(result)
     } catch (err) {
+      if (force && previous) setLink(previous)
+      if (err instanceof ApiError && err.code === 'LINK_CANCELLED') {
+        return
+      }
       if (err instanceof ApiError) {
         setFormError(
           err.code === 'OAUTH_NOT_CONFIGURED'
             ? 'Blizzard 연동이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.'
             : err.code === 'POPUP_BLOCKED'
               ? '팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도해 주세요.'
-              : err.code === 'LINK_CANCELLED'
-                ? 'Blizzard 연동이 취소되었습니다.'
-                : err.code === 'LINK_TIMEOUT' || err.code === 'LINK_EXPIRED'
-                  ? '연동 시간이 만료되었습니다. 다시 시도해 주세요.'
-                  : 'Blizzard 연동에 실패했습니다. 다시 시도해 주세요.',
+              : err.code === 'LINK_TIMEOUT' || err.code === 'LINK_EXPIRED'
+                ? '연동 시간이 만료되었습니다. 다시 시도해 주세요.'
+                : 'Blizzard 연동에 실패했습니다. 다시 시도해 주세요.',
         )
       } else {
         setFormError('Blizzard 연동에 실패했습니다. 다시 시도해 주세요.')
       }
     } finally {
+      if (linkAbortRef.current === ac) linkAbortRef.current = null
       setLinking(false)
     }
+  }
+
+  function handleCancelLink() {
+    linkAbortRef.current?.abort()
   }
 
   async function handleLogin(e: FormEvent) {
@@ -342,23 +362,44 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
                     </div>
                   </div>
                 </div>
+                {linking ? (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={handleCancelLink}
+                  >
+                    연동 취소
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={() => handleLink(true)}
+                  >
+                    다른 계정으로 다시 연동
+                  </button>
+                )}
+              </div>
+            ) : linking ? (
+              <>
+                <button type="button" className="btn btn--blizzard btn--big" disabled>
+                  Blizzard 인증 대기 중...
+                </button>
                 <button
                   type="button"
                   className="btn btn--ghost btn--small"
-                  onClick={() => handleLink(true)}
-                  disabled={linking}
+                  onClick={handleCancelLink}
                 >
-                  {linking ? '전환 중...' : '다른 계정으로 다시 연동'}
+                  연동 취소
                 </button>
-              </div>
+              </>
             ) : (
               <button
                 type="button"
                 className="btn btn--blizzard btn--big"
                 onClick={() => handleLink(false)}
-                disabled={linking}
               >
-                {linking ? 'Blizzard 인증 대기 중...' : 'Blizzard 계정 연동'}
+                Blizzard 계정 연동
               </button>
             )}
           </div>
