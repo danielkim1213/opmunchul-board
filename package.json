@@ -3,16 +3,25 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "dev": "concurrently -n web,api -c cyan,magenta \"vite\" \"npm run server\"",
     "dev:web": "vite",
-    "server": "npm --prefix server start",
-    "start": "npm --prefix server start",
+    "server": "node server/index.js",
+    "start": "node server/index.js",
+    "db:migrate": "node server/migrate.js",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.0",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

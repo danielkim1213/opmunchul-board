@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build && npm run db:migrate",
+  "rewrites": [
+    { "source": "/health", "destination": "/api/index" },
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api|health).*)", "destination": "/index.html" }
+  ]
+}

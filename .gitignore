@@ -15,6 +15,15 @@ dist-ssr
 # SQLite database (local dev data)
 server/data.sqlite
 server/data.sqlite-*
+data.sqlite
+
+# Local secrets (Blizzard OAuth, Turso)
+.env
+.env.*
+!.env.example
+
+# Vercel CLI local project link
+.vercel
 
 # Editor directories and files
 .vscode/*
@@ -26,3 +35,6 @@ server/data.sqlite-*
 *.njsproj
 *.sln
 *.sw?
+
+.vercel
+.env*

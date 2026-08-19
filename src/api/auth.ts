@@ -1,6 +1,8 @@
 // Auth API client — talks to Express.
 // Dev: Vite proxies /api → localhost:3001
-// Prod: set VITE_API_URL to the API origin (e.g. https://opmunchul-api.up.railway.app)
+// Prod (Vercel): API is same-origin (/api/* rewrites to the serverless
+// function), so leave VITE_API_URL unset. Only set it if the API ever
+// moves to a different origin.
 
 const TOKEN_KEY = 'opmunchul.token'
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''

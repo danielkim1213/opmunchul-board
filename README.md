@@ -16,10 +16,12 @@
 
 ```bash
 npm install
-npm --prefix server install
-cp .env.example server/.env   # Blizzard OAuth 값 채우기
-npm run dev     # 프론트 5173 + API 3001
+cp .env.example .env   # Blizzard OAuth 값 채우기 (없어도 게시판 기능은 동작)
+npm run dev            # 프론트 5173 + API 3001
 ```
+
+로컬에서는 DB로 `server/data.sqlite` 파일을 그대로 사용합니다
+(`TURSO_DATABASE_URL`이 비어 있으면 자동 fallback).
 
 ## Blizzard OAuth 설정
 
@@ -62,32 +64,56 @@ npm run dev     # 프론트 5173 + API 3001
 함께 삭제되고, 댓글을 삭제하면 그 답글도 함께 삭제됩니다(투표 게시글의 선택지는 기존 투표를
 보존하기 위해 생성 이후 수정할 수 없습니다).
 
-## Railway 배포 (프론트 + API 한 방)
+## Vercel 배포 (프론트 + API 한 방)
 
-Root Directory를 `server`만 잡으면 **화면이 안 나옵니다.**  
-레포 **루트**에서 Docker로 프론트를 빌드한 뒤 API가 같이 서빙합니다.
-
-1. GitHub에 푸시
-2. Railway → 이 레포 연결
-3. **Root Directory: 비움 (repo root)**  ← `server` 아님
-4. Builder: Dockerfile (`Dockerfile` 사용)
-5. Generate Domain → 그 주소가 곧 사이트+API
+- **프론트**: Vite 빌드 결과(`dist/`)를 Vercel CDN이 정적 서빙
+- **API**: Express 앱 전체가 `api/index.js` 서버리스 함수 하나로 실행
+  (`vercel.json`이 `/api/*`, `/health`를 함수로 rewrite)
+- **DB**: [Turso](https://turso.tech) 호스팅 libSQL — 서버리스에는 로컬
+  SQLite 파일을 둘 수 없어서 외부 DB를 사용합니다. SQLite와 파일/SQL 호환이라
+  기존 `data.sqlite`를 그대로 업로드해 이전할 수 있습니다.
 
 같은 도메인에서 `/` = 화면, `/api/*` = API, `/health` = 헬스체크.
 
-### SQLite 데이터 유지 (필수)
+### 배포 절차
 
-게시글·댓글·투표·계정은 전부 서버 SQLite(`data.sqlite`)에 저장됩니다.
-컨테이너 로컬 디스크에 두면 **재배포마다 파일이 초기화**되어 글이 사라집니다.
+```bash
+# 1) Turso DB 생성 (기존 데이터가 있으면 --from-file 로 그대로 이전)
+turso db create opmunchul-board --from-file server/data.sqlite
+turso db show opmunchul-board --url        # → TURSO_DATABASE_URL
+turso db tokens create opmunchul-board     # → TURSO_AUTH_TOKEN
 
-Railway에서 영구 저장하려면:
+# 2) Vercel 프로젝트 연결 + 환경변수 등록 (아래 표 참고)
+vercel link
+vercel env add TURSO_DATABASE_URL production
+vercel env add TURSO_AUTH_TOKEN production
+vercel env add BLIZZARD_REGION production
+vercel env add BLIZZARD_CLIENT_ID production
+vercel env add BLIZZARD_CLIENT_SECRET production
+vercel env add BLIZZARD_REDIRECT_URI production
 
-1. 서비스 → **Volumes** → Volume 추가
-2. Mount Path를 `/data` 로 설정 (Dockerfile 기본 `DATA_DIR=/data`)
-3. 재배포
+# 3) 배포 (빌드 중에 npm run db:migrate 가 스키마를 자동 반영)
+vercel --prod
+```
 
-다른 경로를 쓰려면 환경변수 `DATA_DIR`을 그 마운트 경로로 맞추면 됩니다.
-로컬 개발은 기본값(`server/data.sqlite`)을 그대로 씁니다.
+### 환경변수
+
+| 이름 | 값 |
+| --- | --- |
+| `TURSO_DATABASE_URL` | `libsql://...` (turso db show --url) |
+| `TURSO_AUTH_TOKEN` | turso db tokens create 결과 |
+| `BLIZZARD_REGION` | `kr` |
+| `BLIZZARD_CLIENT_ID` / `BLIZZARD_CLIENT_SECRET` | Blizzard 개발자 포털 값 |
+| `BLIZZARD_REDIRECT_URI` | `https://<vercel-domain>/api/auth/blizzard/callback` |
+
+> Blizzard 개발자 포털(https://develop.battle.net/access/clients)의 클라이언트
+> 설정에도 새 Redirect URI를 **반드시 등록**해야 OAuth 연동이 됩니다.
+
+### Turso 주의사항
+
+Turso(libSQL)는 `PRAGMA foreign_keys`가 기본 OFF라 스키마의
+`ON DELETE CASCADE`가 실행되지 않습니다. 게시글/댓글 삭제는
+`server/posts.js`의 명시적 연쇄 삭제(트랜잭션 batch)로 처리합니다.
 
 ## OverFast 정책
 

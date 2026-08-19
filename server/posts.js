@@ -20,6 +20,10 @@ const POST_TYPES = ['tip', 'feedback', 'poll']
 
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/
 
+/** Same promise-forwarding wrapper as app.js — Express 4 doesn't route
+ * rejected promises from async handlers to the error middleware. */
+const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
+
 function extractYoutubeId(input) {
   const trimmed = String(input ?? '').trim()
   if (!trimmed) return null
@@ -42,18 +46,23 @@ function extractYoutubeId(input) {
   return null
 }
 
-const insertPost = db.prepare(`
+// Raw SQL kept separate where it's also needed inside db.batch() transactions.
+const INSERT_POST_SQL = `
   INSERT INTO posts (
     id, type, title, body, author_username_key, allowed_tiers,
     replay_code, youtube_id, hero, team_side, is_notice, created_at
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`)
+`
+const INSERT_OPTION_SQL = `
+  INSERT INTO post_poll_options (id, post_id, label, order_index) VALUES (?, ?, ?, ?)
+`
+
+const insertPost = db.prepare(INSERT_POST_SQL)
 const updatePostRow = db.prepare(`
   UPDATE posts
   SET title = ?, body = ?, allowed_tiers = ?, replay_code = ?, youtube_id = ?, hero = ?, team_side = ?, is_notice = ?, updated_at = ?
   WHERE id = ?
 `)
-const deletePostRow = db.prepare('DELETE FROM posts WHERE id = ?')
 const findPostRow = db.prepare('SELECT * FROM posts WHERE id = ?')
 // Author's battletag is intentionally not selected here — posts/comments
 // are public, and this is a pseudonymous board, so only `username` (the
@@ -105,9 +114,6 @@ const findPostWithAuthor = db.prepare(`
 
 const countComments = db.prepare('SELECT COUNT(*) AS n FROM post_comments WHERE post_id = ?')
 
-const insertOption = db.prepare(`
-  INSERT INTO post_poll_options (id, post_id, label, order_index) VALUES (?, ?, ?, ?)
-`)
 // One aggregated query per poll instead of a COUNT per option (N+1).
 const listOptionsWithVotes = db.prepare(`
   SELECT o.id, o.label, COUNT(v.username_key) AS votes
@@ -137,7 +143,6 @@ const insertComment = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `)
 const updateCommentRow = db.prepare('UPDATE post_comments SET content = ?, updated_at = ? WHERE id = ?')
-const deleteCommentRow = db.prepare('DELETE FROM post_comments WHERE id = ?')
 const findComment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
 // Upvote count and the viewer's own upvote are folded into the listing query
 // so rendering a thread costs one query instead of 2 per comment (N+1).
@@ -164,6 +169,52 @@ const addUpvote = db.prepare(
 const removeUpvote = db.prepare(
   'DELETE FROM post_comment_upvotes WHERE comment_id = ? AND username_key = ?',
 )
+
+/* ------------------------------------------------------------------ *
+ * Explicit cascading deletes.
+ * Turso/libSQL leaves PRAGMA foreign_keys OFF (per-connection, not settable
+ * reliably over the HTTP driver), so the schema's ON DELETE CASCADE clauses
+ * never fire in production. Each delete below removes children explicitly,
+ * atomically, in one transaction.
+ * ------------------------------------------------------------------ */
+
+function deletePostCascade(postId) {
+  return db.batch([
+    {
+      sql: `DELETE FROM post_comment_upvotes
+            WHERE comment_id IN (SELECT id FROM post_comments WHERE post_id = ?)`,
+      args: [postId],
+    },
+    { sql: 'DELETE FROM post_comments WHERE post_id = ?', args: [postId] },
+    { sql: 'DELETE FROM post_poll_votes WHERE post_id = ?', args: [postId] },
+    { sql: 'DELETE FROM post_poll_options WHERE post_id = ?', args: [postId] },
+    { sql: 'DELETE FROM posts WHERE id = ?', args: [postId] },
+  ])
+}
+
+// Recursive CTE collects the comment plus all (arbitrarily nested) replies.
+const COMMENT_TREE_CTE = `
+  WITH RECURSIVE tree(id) AS (
+    SELECT ?
+    UNION ALL
+    SELECT c.id FROM post_comments c JOIN tree ON c.parent_id = tree.id
+  )
+`
+
+function deleteCommentCascade(commentId) {
+  return db.batch([
+    {
+      sql: `${COMMENT_TREE_CTE}
+            DELETE FROM post_comment_upvotes WHERE comment_id IN (SELECT id FROM tree)`,
+      args: [commentId],
+    },
+    {
+      sql: `${COMMENT_TREE_CTE}
+            DELETE FROM post_comments WHERE id IN (SELECT id FROM tree)`,
+      args: [commentId],
+    },
+  ])
+}
 
 function roleLabelOf(rankRole) {
   return rankRole === 'tank'
@@ -196,14 +247,14 @@ function toPublicAuthor(row) {
   }
 }
 
-function pollSummary(postId, viewerKey) {
-  const options = listOptionsWithVotes.all(postId).map((o) => ({
+async function pollSummary(postId, viewerKey) {
+  const options = (await listOptionsWithVotes.all(postId)).map((o) => ({
     id: o.id,
     label: o.label,
     votes: o.votes,
   }))
   const totalVotes = options.reduce((sum, o) => sum + o.votes, 0)
-  const myVote = viewerKey ? findMyVote.get(postId, viewerKey) : null
+  const myVote = viewerKey ? await findMyVote.get(postId, viewerKey) : null
   return { options, totalVotes, myOptionId: myVote?.option_id ?? null }
 }
 
@@ -243,10 +294,10 @@ function toPublicPostSummary(row, viewerRankLabel, viewerKey, viewerIsAdmin = fa
   }
 }
 
-function toPublicPostDetail(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
+async function toPublicPostDetail(row, viewerRankLabel, viewerKey, viewerIsAdmin = false) {
   const base = toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin)
   if (row.type === 'tip') {
-    return { ...base, body: row.body, commentCount: countComments.get(row.id).n }
+    return { ...base, body: row.body, commentCount: (await countComments.get(row.id)).n }
   }
   if (row.type === 'feedback') {
     return {
@@ -256,14 +307,16 @@ function toPublicPostDetail(row, viewerRankLabel, viewerKey, viewerIsAdmin = fal
       youtubeId: row.youtube_id,
       hero: row.hero,
       teamSide: row.team_side,
-      commentCount: countComments.get(row.id).n,
+      commentCount: (await countComments.get(row.id)).n,
     }
   }
   // poll
-  const { options, totalVotes, myOptionId } = pollSummary(row.id, viewerKey)
+  const { options, totalVotes, myOptionId } = await pollSummary(row.id, viewerKey)
   return { ...base, options, totalVotes, myOptionId }
 }
 
+/** Rows must carry upvote_count / upvoted_by_me (listComments does; handlers
+ * that build rows manually fill them in before calling this). */
 function toPublicComment(row, viewerKey, viewerIsAdmin = false) {
   return {
     id: row.id,
@@ -273,15 +326,8 @@ function toPublicComment(row, viewerKey, viewerIsAdmin = false) {
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
     author: toPublicAuthor(row),
-    // Rows from `listComments` carry aggregated fields; rows loaded via
-    // `findComment` (create/edit responses) fall back to point queries.
-    upvotes: row.upvote_count ?? countUpvotes.get(row.id).n,
-    upvotedByMe:
-      row.upvoted_by_me !== undefined
-        ? Boolean(row.upvoted_by_me)
-        : viewerKey
-          ? Boolean(hasUpvoted.get(row.id, viewerKey))
-          : false,
+    upvotes: row.upvote_count ?? 0,
+    upvotedByMe: Boolean(row.upvoted_by_me),
     isMine: viewerKey ? row.username_key === viewerKey : false,
     canDelete: (viewerKey ? row.username_key === viewerKey : false) || viewerIsAdmin,
   }
@@ -300,11 +346,11 @@ function sanitizeAllowedTiers(raw) {
 
 /**
  * @param {import('express').Express} app
- * @param {{ authenticate: (req: import('express').Request) => { user: any, token: string } | null }} deps
+ * @param {{ authenticate: (req: import('express').Request) => Promise<{ user: any, token: string } | null> }} deps
  */
 export function registerPostRoutes(app, { authenticate }) {
-  app.get('/api/posts', (req, res) => {
-    const auth = authenticate(req)
+  app.get('/api/posts', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     const typeFilter = POST_TYPES.includes(req.query.type) ? req.query.type : null
 
     let limit = Number.parseInt(String(req.query.limit ?? LIST_DEFAULT_LIMIT), 10)
@@ -314,12 +360,12 @@ export function registerPostRoutes(app, { authenticate }) {
     let page = Number.parseInt(String(req.query.page ?? '1'), 10)
     if (!Number.isFinite(page) || page < 1) page = 1
 
-    const total = countPosts.get(typeFilter, typeFilter).n
+    const total = (await countPosts.get(typeFilter, typeFilter)).n
     const totalPages = total === 0 ? 0 : Math.ceil(total / limit)
     if (totalPages > 0 && page > totalPages) page = totalPages
     const offset = (page - 1) * limit
 
-    const rows = listPostsPaged.all(typeFilter, typeFilter, limit, offset)
+    const rows = await listPostsPaged.all(typeFilter, typeFilter, limit, offset)
     const viewerRankLabel = auth?.user.rank_label ?? null
     const viewerKey = auth?.user.username_key ?? null
     const viewerIsAdmin = isAdmin(auth?.user)
@@ -330,24 +376,24 @@ export function registerPostRoutes(app, { authenticate }) {
       total,
       totalPages,
     })
-  })
+  }))
 
-  app.get('/api/posts/:id', (req, res) => {
-    const row = findPostWithAuthor.get(req.params.id)
+  app.get('/api/posts/:id', asyncRoute(async (req, res) => {
+    const row = await findPostWithAuthor.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
 
-    const auth = authenticate(req)
-    const post = toPublicPostDetail(
+    const auth = await authenticate(req)
+    const post = await toPublicPostDetail(
       row,
       auth?.user.rank_label ?? null,
       auth?.user.username_key ?? null,
       isAdmin(auth?.user),
     )
     return res.json({ post })
-  })
+  }))
 
-  app.post('/api/posts', (req, res) => {
-    const auth = authenticate(req)
+  app.post('/api/posts', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
     const type = String(req.body?.type ?? '')
@@ -374,7 +420,7 @@ export function registerPostRoutes(app, { authenticate }) {
       if (!body) return res.status(400).json({ error: 'EMPTY_BODY' })
       if (body.length > TIP_BODY_MAX) return res.status(400).json({ error: 'BODY_TOO_LONG' })
 
-      insertPost.run(id, type, title, body, auth.user.username_key, null, null, null, null, null, noticeFlag, createdAt)
+      await insertPost.run(id, type, title, body, auth.user.username_key, null, null, null, null, null, noticeFlag, createdAt)
     } else if (type === 'feedback') {
       const body = String(req.body?.body ?? '').trim()
       // Replay code is a nice-to-have, not required — plenty of feedback
@@ -389,7 +435,7 @@ export function registerPostRoutes(app, { authenticate }) {
       if (!hero) return res.status(400).json({ error: 'EMPTY_HERO' })
       if (!youtubeId) return res.status(400).json({ error: 'INVALID_YOUTUBE_URL' })
 
-      insertPost.run(
+      await insertPost.run(
         id,
         type,
         title,
@@ -416,43 +462,42 @@ export function registerPostRoutes(app, { authenticate }) {
 
       // Post + options must land together — a failure halfway through would
       // otherwise leave a poll with no (or missing) options.
-      db.exec('BEGIN')
-      try {
-        insertPost.run(
-          id,
-          type,
-          title,
-          null,
-          auth.user.username_key,
-          JSON.stringify(allowedTiers),
-          null,
-          null,
-          null,
-          null,
-          noticeFlag,
-          createdAt,
-        )
-        options.forEach((label, index) => {
-          insertOption.run(randomUUID(), id, label, index)
-        })
-        db.exec('COMMIT')
-      } catch (err) {
-        db.exec('ROLLBACK')
-        throw err
-      }
+      await db.batch([
+        {
+          sql: INSERT_POST_SQL,
+          args: [
+            id,
+            type,
+            title,
+            null,
+            auth.user.username_key,
+            JSON.stringify(allowedTiers),
+            null,
+            null,
+            null,
+            null,
+            noticeFlag,
+            createdAt,
+          ],
+        },
+        ...options.map((label, index) => ({
+          sql: INSERT_OPTION_SQL,
+          args: [randomUUID(), id, label, index],
+        })),
+      ])
     }
 
-    const row = findPostWithAuthor.get(id)
+    const row = await findPostWithAuthor.get(id)
     return res.status(201).json({
-      post: toPublicPostDetail(row, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
+      post: await toPublicPostDetail(row, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
     })
-  })
+  }))
 
-  app.patch('/api/posts/:id', (req, res) => {
-    const auth = authenticate(req)
+  app.patch('/api/posts/:id', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const row = findPostRow.get(req.params.id)
+    const row = await findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
     if (row.author_username_key !== auth.user.username_key) {
       return res.status(403).json({ error: 'FORBIDDEN' })
@@ -507,7 +552,7 @@ export function registerPostRoutes(app, { authenticate }) {
       noticeFlag = wantNotice ? 1 : 0
     }
 
-    updatePostRow.run(
+    await updatePostRow.run(
       title,
       body,
       JSON.stringify(allowedTiers),
@@ -520,38 +565,36 @@ export function registerPostRoutes(app, { authenticate }) {
       row.id,
     )
 
-    const updated = findPostWithAuthor.get(row.id)
+    const updated = await findPostWithAuthor.get(row.id)
     return res.json({
-      post: toPublicPostDetail(updated, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
+      post: await toPublicPostDetail(updated, auth.user.rank_label, auth.user.username_key, isAdmin(auth.user)),
     })
-  })
+  }))
 
-  app.delete('/api/posts/:id', (req, res) => {
-    const auth = authenticate(req)
+  app.delete('/api/posts/:id', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const row = findPostRow.get(req.params.id)
+    const row = await findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
     // Admins may delete any post (moderation power).
     if (row.author_username_key !== auth.user.username_key && !isAdmin(auth.user)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 
-    // Cascades to post_comments / post_comment_upvotes / post_poll_options /
-    // post_poll_votes now that foreign_keys enforcement is on (see db.js).
-    deletePostRow.run(row.id)
+    await deletePostCascade(row.id)
     return res.json({ ok: true })
-  })
+  }))
 
-  app.get('/api/posts/:id/comments', (req, res) => {
-    const post = findPostRow.get(req.params.id)
+  app.get('/api/posts/:id/comments', asyncRoute(async (req, res) => {
+    const post = await findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
     if (post.type === 'poll') return res.status(400).json({ error: 'COMMENTS_NOT_SUPPORTED' })
 
-    const auth = authenticate(req)
+    const auth = await authenticate(req)
     const viewerKey = auth?.user.username_key ?? null
     const viewerIsAdmin = isAdmin(auth?.user)
-    const rows = listComments.all(viewerKey, post.id)
+    const rows = await listComments.all(viewerKey, post.id)
     const flat = rows.map((r) => ({ ...toPublicComment(r, viewerKey, viewerIsAdmin), replies: [] }))
 
     // Builds the reply tree at arbitrary depth in one pass (rows are in
@@ -566,13 +609,13 @@ export function registerPostRoutes(app, { authenticate }) {
       }
     }
     return res.json({ comments: top })
-  })
+  }))
 
-  app.post('/api/posts/:id/comments', (req, res) => {
-    const auth = authenticate(req)
+  app.post('/api/posts/:id/comments', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const post = findPostRow.get(req.params.id)
+    const post = await findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
     if (post.type === 'poll') return res.status(400).json({ error: 'COMMENTS_NOT_SUPPORTED' })
 
@@ -609,7 +652,7 @@ export function registerPostRoutes(app, { authenticate }) {
     // Replies can nest at any depth — the only requirement is that the
     // parent exists and belongs to the same post.
     if (parentId) {
-      const parent = findComment.get(parentId)
+      const parent = await findComment.get(parentId)
       if (!parent || parent.post_id !== post.id) {
         return res.status(400).json({ error: 'INVALID_PARENT' })
       }
@@ -617,7 +660,7 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const id = randomUUID()
     const createdAt = Date.now()
-    insertComment.run(id, post.id, parentId, auth.user.username_key, timestampSeconds, content, createdAt)
+    await insertComment.run(id, post.id, parentId, auth.user.username_key, timestampSeconds, content, createdAt)
 
     const withAuthor = {
       id,
@@ -642,13 +685,13 @@ export function registerPostRoutes(app, { authenticate }) {
         replies: [],
       },
     })
-  })
+  }))
 
-  app.patch('/api/posts/comments/:id', (req, res) => {
-    const auth = authenticate(req)
+  app.patch('/api/posts/comments/:id', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const comment = findComment.get(req.params.id)
+    const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
     if (comment.username_key !== auth.user.username_key) {
       return res.status(403).json({ error: 'FORBIDDEN' })
@@ -658,11 +701,13 @@ export function registerPostRoutes(app, { authenticate }) {
     if (!content) return res.status(400).json({ error: 'EMPTY_CONTENT' })
     if (content.length > COMMENT_MAX) return res.status(400).json({ error: 'CONTENT_TOO_LONG' })
 
-    updateCommentRow.run(content, Date.now(), comment.id)
+    await updateCommentRow.run(content, Date.now(), comment.id)
 
-    const row = findComment.get(comment.id)
+    const row = await findComment.get(comment.id)
     const withAuthor = {
       ...row,
+      upvote_count: (await countUpvotes.get(comment.id)).n,
+      upvoted_by_me: Boolean(await hasUpvoted.get(comment.id, auth.user.username_key)),
       username: auth.user.username,
       role: auth.user.role,
       rank_label: auth.user.rank_label,
@@ -673,31 +718,30 @@ export function registerPostRoutes(app, { authenticate }) {
     return res.json({
       comment: toPublicComment(withAuthor, auth.user.username_key, isAdmin(auth.user)),
     })
-  })
+  }))
 
-  app.delete('/api/posts/comments/:id', (req, res) => {
-    const auth = authenticate(req)
+  app.delete('/api/posts/comments/:id', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const comment = findComment.get(req.params.id)
+    const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
     // Admins may delete any comment (moderation power).
     if (comment.username_key !== auth.user.username_key && !isAdmin(auth.user)) {
       return res.status(403).json({ error: 'FORBIDDEN' })
     }
 
-    // Cascades to replies + upvotes now that foreign_keys enforcement is on.
-    deleteCommentRow.run(comment.id)
+    await deleteCommentCascade(comment.id)
     return res.json({ ok: true })
-  })
+  }))
 
-  app.post('/api/posts/comments/:id/upvote', (req, res) => {
-    const auth = authenticate(req)
+  app.post('/api/posts/comments/:id/upvote', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const comment = findComment.get(req.params.id)
+    const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
-    const post = findPostRow.get(comment.post_id)
+    const post = await findPostRow.get(comment.post_id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
 
     const allowedTiers = parseAllowedTiers(post.allowed_tiers)
@@ -705,23 +749,23 @@ export function registerPostRoutes(app, { authenticate }) {
       return res.status(403).json({ error: 'TIER_NOT_ALLOWED' })
     }
 
-    const already = Boolean(hasUpvoted.get(comment.id, auth.user.username_key))
+    const already = Boolean(await hasUpvoted.get(comment.id, auth.user.username_key))
     if (already) {
-      removeUpvote.run(comment.id, auth.user.username_key)
+      await removeUpvote.run(comment.id, auth.user.username_key)
     } else {
-      addUpvote.run(comment.id, auth.user.username_key)
+      await addUpvote.run(comment.id, auth.user.username_key)
     }
     return res.json({
-      upvotes: countUpvotes.get(comment.id).n,
+      upvotes: (await countUpvotes.get(comment.id)).n,
       upvotedByMe: !already,
     })
-  })
+  }))
 
-  app.post('/api/posts/:id/vote', (req, res) => {
-    const auth = authenticate(req)
+  app.post('/api/posts/:id/vote', asyncRoute(async (req, res) => {
+    const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
 
-    const post = findPostRow.get(req.params.id)
+    const post = await findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
     if (post.type !== 'poll') return res.status(400).json({ error: 'NOT_A_POLL' })
 
@@ -731,20 +775,20 @@ export function registerPostRoutes(app, { authenticate }) {
     }
 
     const optionId = String(req.body?.optionId ?? '')
-    const option = findOption.get(optionId)
+    const option = await findOption.get(optionId)
     if (!option || option.post_id !== post.id) {
       return res.status(400).json({ error: 'INVALID_OPTION' })
     }
 
     // Voting the option you already picked cancels the vote (toggle).
-    const existing = findMyVote.get(post.id, auth.user.username_key)
+    const existing = await findMyVote.get(post.id, auth.user.username_key)
     if (existing?.option_id === optionId) {
-      deleteVote.run(post.id, auth.user.username_key)
+      await deleteVote.run(post.id, auth.user.username_key)
     } else {
-      upsertVote.run(post.id, optionId, auth.user.username_key, Date.now())
+      await upsertVote.run(post.id, optionId, auth.user.username_key, Date.now())
     }
 
-    const { options, totalVotes, myOptionId } = pollSummary(post.id, auth.user.username_key)
+    const { options, totalVotes, myOptionId } = await pollSummary(post.id, auth.user.username_key)
     return res.json({ options, totalVotes, myOptionId })
-  })
+  }))
 }
