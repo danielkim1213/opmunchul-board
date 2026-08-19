@@ -1840,3 +1840,145 @@
     padding: 15px;
   }
 }
+
+.username-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  vertical-align: baseline;
+}
+
+.username-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.username-btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.username--banned {
+  opacity: 0.92;
+}
+
+.username-ban-mark {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--red);
+  border: 1px solid rgba(224, 119, 119, 0.45);
+  background: rgba(224, 119, 119, 0.12);
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+
+.user-mod-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 228px;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-mod-menu__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.user-mod-menu__head strong {
+  font-size: 14px;
+}
+
+.user-mod-menu__bt {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.user-mod-menu__status-line,
+.user-mod-menu__status,
+.user-mod-menu__hint,
+.user-mod-menu__label {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+.user-mod-menu__item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.user-mod-menu__item:hover:not(:disabled) {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.user-mod-menu__item:disabled,
+.user-mod-menu__ban:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.user-mod-menu__bans {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.user-mod-menu__ban-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.user-mod-menu__ban {
+  background: transparent;
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.user-mod-menu__ban:hover:not(:disabled) {
+  border-color: var(--orange);
+}
+
+.user-mod-menu__ban--perm {
+  color: var(--red);
+}
+
+.user-mod-menu__ban--perm:hover:not(:disabled) {
+  border-color: var(--red);
+}

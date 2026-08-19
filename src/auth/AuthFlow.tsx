@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
   ApiError,
+  bannedUserMessage,
   isValidPassword,
   isValidUsername,
   checkUsername,
@@ -169,12 +170,14 @@ export default function AuthFlow({ onAuthenticated }: AuthFlowProps) {
           ? '이미 사용 중인 아이디입니다.'
           : err instanceof ApiError && err.code === 'BATTLETAG_TAKEN'
             ? '이미 다른 계정에 연동된 배틀태그입니다.'
-            : err instanceof ApiError &&
-                (err.code === 'LINK_EXPIRED' || err.code === 'LINK_REQUIRED')
-              ? 'Blizzard 연동이 만료되었습니다. 다시 연동해 주세요.'
-              : err instanceof ApiError && err.code === 'WEAK_PASSWORD'
-                ? `비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다.`
-                : '가입에 실패했습니다. 다시 시도해 주세요.',
+            : err instanceof ApiError && err.code === 'BANNED'
+              ? bannedUserMessage(err, 'register')
+              : err instanceof ApiError &&
+                  (err.code === 'LINK_EXPIRED' || err.code === 'LINK_REQUIRED')
+                ? 'Blizzard 연동이 만료되었습니다. 다시 연동해 주세요.'
+                : err instanceof ApiError && err.code === 'WEAK_PASSWORD'
+                  ? `비밀번호는 최소 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다.`
+                  : '가입에 실패했습니다. 다시 시도해 주세요.',
       )
       if (err instanceof ApiError && (err.code === 'LINK_EXPIRED' || err.code === 'LINK_REQUIRED')) {
         setLink(null)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ApiError } from '../api/auth'
+import { boardErrorMessage } from '../api/auth'
 import {
   addPostComment,
   deletePost,
@@ -11,6 +11,7 @@ import {
 } from '../api/posts'
 import type { PostComment, TipPostDetail as TipPost } from '../api/posts'
 import RankBadge from '../components/RankBadge'
+import UsernameButton from './UsernameButton'
 import CommentCard from './CommentCard'
 import {
   addReply,
@@ -87,11 +88,7 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
       setComments((prev) => [...prev, comment])
       setContent('')
     } catch (err) {
-      setFormError(
-        err instanceof ApiError && err.code === 'UNAUTHENTICATED'
-          ? '로그인이 필요합니다.'
-          : '댓글 등록에 실패했습니다. 다시 시도해 주세요.',
-      )
+      setFormError(boardErrorMessage(err, '댓글 등록에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setSubmitting(false)
     }
@@ -102,8 +99,9 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
     try {
       const result = await togglePostCommentUpvote(commentId)
       setComments((prev) => applyUpvoteResult(prev, commentId, result))
-    } catch {
+    } catch (err) {
       setComments((prev) => toggleUpvoteInTree(prev, commentId))
+      window.alert(boardErrorMessage(err, '추천에 실패했습니다. 다시 시도해 주세요.'))
     }
   }
 
@@ -129,8 +127,8 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
       setComments((prev) => addReply(prev, parentId, comment))
       setReplyContent('')
       setReplyTarget(null)
-    } catch {
-      // Best-effort — the reply box stays open so the user can retry.
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '답글 등록에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setReplySubmitting(false)
     }
@@ -185,9 +183,12 @@ export default function TipPostDetail({ post, onBack, onEdit, onDeleted }: TipPo
           {post.title}
         </h1>
         <div className="post-detail__author">
-          <span className={`post-detail__tag${post.author.isAdmin ? ' username--admin' : ''}`}>
-            {post.author.username}
-          </span>
+          <UsernameButton
+            username={post.author.username}
+            isAdmin={post.author.isAdmin}
+            isBanned={post.author.isBanned}
+            className="post-detail__tag"
+          />
           <RankBadge
             rankLabel={post.author.rankLabel}
             rankIcon={post.author.rankIcon}

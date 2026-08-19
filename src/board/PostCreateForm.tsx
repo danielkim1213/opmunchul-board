@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { ApiError } from '../api/auth'
+import { ApiError, boardErrorMessage } from '../api/auth'
 import { createPost, updatePost } from '../api/posts'
 import type { CreatePostInput, PostDetail, PostType, TeamSide, TierKey } from '../api/posts'
 import { extractYoutubeId } from './time'
@@ -10,7 +10,7 @@ const TITLE_MAX = 100
 const TIP_BODY_MAX = 2000
 const FEEDBACK_NOTE_MAX = 500
 const POLL_OPTION_MAX = 40
-const POLL_MAX_OPTIONS = 5
+const POLL_MAX_OPTIONS = 10
 
 const TYPE_OPTIONS: { key: PostType; emoji: string; label: string }[] = [
   { key: 'tip', emoji: '💡', label: '팁' },
@@ -28,7 +28,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   BODY_TOO_LONG: '내용이 너무 길어요.',
   EMPTY_HERO: '영웅을 입력해 주세요.',
   INVALID_YOUTUBE_URL: '올바른 YouTube 링크를 입력해 주세요.',
-  INVALID_OPTION_COUNT: '선택지는 2~5개까지 입력할 수 있습니다.',
+  INVALID_OPTION_COUNT: `선택지는 2~${POLL_MAX_OPTIONS}개까지 입력할 수 있습니다.`,
   OPTION_TOO_LONG: `선택지는 ${POLL_OPTION_MAX}자 이내로 작성해 주세요.`,
 }
 
@@ -215,9 +215,11 @@ export default function PostCreateForm({
       onCreated(post)
     } catch (err) {
       setError(
-        err instanceof ApiError
-          ? ERROR_MESSAGES[err.code] ?? '게시글 저장에 실패했습니다. 다시 시도해 주세요.'
-          : '게시글 저장에 실패했습니다. 다시 시도해 주세요.',
+        err instanceof ApiError && err.code === 'BANNED'
+          ? boardErrorMessage(err, '게시글 저장에 실패했습니다. 다시 시도해 주세요.')
+          : err instanceof ApiError
+            ? ERROR_MESSAGES[err.code] ?? '게시글 저장에 실패했습니다. 다시 시도해 주세요.'
+            : '게시글 저장에 실패했습니다. 다시 시도해 주세요.',
       )
     } finally {
       setSubmitting(false)
@@ -356,7 +358,7 @@ export default function PostCreateForm({
         {activeType === 'poll' && (
           <>
             <div className="field">
-              <span className="field__label">선택지 (2~5개){isEditing && ' — 수정 불가'}</span>
+              <span className="field__label">선택지 (2~{POLL_MAX_OPTIONS}개){isEditing && ' — 수정 불가'}</span>
               <div className="post-create__options">
                 {options.map((option, index) => (
                   <div key={index} className="post-create__option-row">

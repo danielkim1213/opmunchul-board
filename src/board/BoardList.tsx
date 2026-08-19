@@ -1,6 +1,7 @@
 import type { PostSummary, PostType } from '../api/posts'
 import { TIER_LABEL_KO } from '../api/posts'
 import RankBadge from '../components/RankBadge'
+import UsernameButton from './UsernameButton'
 
 type Filter = PostType | 'all'
 
@@ -77,10 +78,17 @@ export default function BoardList({
           const typeLabel = TYPE_LABEL[post.type]
           return (
             <li key={post.id}>
-              <button
-                type="button"
+              <div
                 className={`post-card${post.isNotice ? ' post-card--notice' : ''}`}
+                role="link"
+                tabIndex={0}
                 onClick={() => onSelect(post.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSelect(post.id)
+                  }
+                }}
               >
                 {post.type === 'feedback' && (
                   <img
@@ -109,9 +117,11 @@ export default function BoardList({
                   <div className="post-card__title">{post.title}</div>
                   <div className="post-card__meta">
                     <span className="post-card__author">
-                      <span className={post.author.isAdmin ? 'username--admin' : undefined}>
-                        {post.author.username}
-                      </span>
+                      <UsernameButton
+                        username={post.author.username}
+                        isAdmin={post.author.isAdmin}
+                        isBanned={post.author.isBanned}
+                      />
                       <RankBadge
                         rankLabel={post.author.rankLabel}
                         rankIcon={post.author.rankIcon}
@@ -129,7 +139,7 @@ export default function BoardList({
                     )}
                   </div>
                 </div>
-              </button>
+              </div>
             </li>
           )
         })}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { ApiError } from '../api/auth'
+import { boardErrorMessage } from '../api/auth'
 import {
   addPostComment,
   deletePost,
@@ -13,6 +13,7 @@ import type { FeedbackPostDetail as FeedbackPost, PostComment } from '../api/pos
 import YouTubePlayer from '../components/YouTubePlayer'
 import type { YouTubePlayerHandle } from '../components/YouTubePlayer'
 import RankBadge from '../components/RankBadge'
+import UsernameButton from './UsernameButton'
 import CommentCard from './CommentCard'
 import {
   addReply,
@@ -145,13 +146,7 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
       setTimestampTouched(false)
       setIsGlobalFeedback(false)
     } catch (err) {
-      setFormError(
-        err instanceof ApiError && err.code === 'UNAUTHENTICATED'
-          ? '로그인이 필요합니다.'
-          : err instanceof ApiError && err.code === 'TIER_NOT_ALLOWED'
-            ? '자격 티어가 아닙니다.'
-            : '피드백 등록에 실패했습니다. 다시 시도해 주세요.',
-      )
+      setFormError(boardErrorMessage(err, '피드백 등록에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setSubmitting(false)
     }
@@ -162,8 +157,9 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
     try {
       const result = await togglePostCommentUpvote(commentId)
       setComments((prev) => applyUpvoteResult(prev, commentId, result))
-    } catch {
+    } catch (err) {
       setComments((prev) => toggleUpvoteInTree(prev, commentId))
+      window.alert(boardErrorMessage(err, '추천에 실패했습니다. 다시 시도해 주세요.'))
     }
   }
 
@@ -209,8 +205,8 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
       setComments((prev) => addReply(prev, parentId, comment))
       setReplyContent('')
       setReplyTarget(null)
-    } catch {
-      // Best-effort — the reply box stays open so the user can retry.
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '답글 등록에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setReplySubmitting(false)
     }
@@ -329,9 +325,11 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
               <div className="vod-meta__field vod-meta__field--submitter">
                 <span className="vod-meta__label">작성자</span>
                 <span className="vod-meta__value vod-meta__submitter">
-                  <span className={post.author.isAdmin ? 'username--admin' : undefined}>
-                    {post.author.username}
-                  </span>
+                  <UsernameButton
+                    username={post.author.username}
+                    isAdmin={post.author.isAdmin}
+                    isBanned={post.author.isBanned}
+                  />
                   <RankBadge
                     rankLabel={post.author.rankLabel}
                     rankIcon={post.author.rankIcon}

@@ -26,6 +26,7 @@ import {
 } from './blizzard.js'
 import { registerPostRoutes } from './posts.js'
 import { isAdmin } from './admins.js'
+import { isBanActive, parseBanDuration, banErrorBody } from './bans.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30
@@ -125,6 +126,9 @@ const updateRankDetails = db.prepare(`
       rank_fetched_at = ?
   WHERE username_key = ?
 `)
+const touchRankFetchedAt = db.prepare(`
+  UPDATE users SET rank_fetched_at = ? WHERE username_key = ?
+`)
 
 const updateBattletagLink = db.prepare(`
   UPDATE users
@@ -147,6 +151,20 @@ const insertSession = db.prepare(`
 const findSession = db.prepare('SELECT * FROM sessions WHERE token = ?')
 const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?')
 const deleteExpiredSessions = db.prepare('DELETE FROM sessions WHERE expires_at < ?')
+
+const findBan = db.prepare('SELECT * FROM banned_battletags WHERE battletag_key = ?')
+const upsertBan = db.prepare(`
+  INSERT INTO banned_battletags (
+    battletag_key, battletag, duration, expires_at, banned_by_username_key, created_at
+  ) VALUES (?, ?, ?, ?, ?, ?)
+  ON CONFLICT(battletag_key) DO UPDATE SET
+    battletag = excluded.battletag,
+    duration = excluded.duration,
+    expires_at = excluded.expires_at,
+    banned_by_username_key = excluded.banned_by_username_key,
+    created_at = excluded.created_at
+`)
+const deleteBan = db.prepare('DELETE FROM banned_battletags WHERE battletag_key = ?')
 
 const insertLink = db.prepare(`
   INSERT INTO oauth_links (state, status, created_at, expires_at)
@@ -197,6 +215,22 @@ function toPublicUser(row) {
   }
 }
 
+function toModerationUser(row, ban) {
+  const banned = isBanActive(ban)
+  return {
+    username: row.username,
+    battletag: row.battletag,
+    isAdmin: isAdmin(row),
+    isBanned: banned,
+    banExpiresAt: banned ? (ban.expires_at ?? null) : null,
+    banDuration: banned ? (ban.duration ?? null) : null,
+  }
+}
+
+async function loadBan(battletagKey) {
+  return findBan.get(battletagKey)
+}
+
 async function createSession(usernameKey) {
   const token = randomBytes(32).toString('hex')
   const now = Date.now()
@@ -218,29 +252,34 @@ async function authenticate(req) {
     return null
   }
   const user = await findUser.get(session.username_key)
-  return user ? { user, token } : null
+  if (!user) return null
+  const ban = await loadBan(user.battletag_key)
+  return { user, token, ban: isBanActive(ban) ? ban : null }
 }
 
 async function ensureDailyRank(user) {
-  if (
-    isFetchedToday(user.rank_fetched_at) &&
-    user.rank_role &&
-    user.most_heroes
-  ) {
+  // One OverFast round-trip per UTC day, even if the last attempt 404'd or
+  // left the profile unranked. Otherwise every page refresh re-hits the API.
+  if (isFetchedToday(user.rank_fetched_at)) {
     return user
   }
 
-  const { summary, rank } = await buildRankProfile(user.battletag)
-  await updateRankDetails.run(
-    rank.rankLabel,
-    rank.rankIcon,
-    rank.rankRole,
-    JSON.stringify(rank.mostHeroes),
-    summary.avatar ?? null,
-    Date.now(),
-    user.username_key,
-  )
-  return findUser.get(user.username_key)
+  try {
+    const { summary, rank } = await buildRankProfile(user.battletag)
+    await updateRankDetails.run(
+      rank.rankLabel,
+      rank.rankIcon,
+      rank.rankRole,
+      JSON.stringify(rank.mostHeroes),
+      summary.avatar ?? null,
+      Date.now(),
+      user.username_key,
+    )
+    return findUser.get(user.username_key)
+  } catch (err) {
+    await touchRankFetchedAt.run(Date.now(), user.username_key)
+    throw err
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -424,6 +463,8 @@ app.post('/api/auth/blizzard/apply', asyncRoute(async (req, res) => {
   if (conflict) {
     return res.status(409).json({ error: 'BATTLETAG_TAKEN' })
   }
+  const banned = banErrorBody(await loadBan(link.battletag_key))
+  if (banned) return res.status(403).json(banned)
 
   let profile
   try {
@@ -480,6 +521,8 @@ app.post('/api/auth/register', rateLimit('register', 10, 60_000), asyncRoute(asy
   if (await findUserByBattletag.get(link.battletag_key)) {
     return res.status(409).json({ error: 'BATTLETAG_TAKEN' })
   }
+  const banned = banErrorBody(await loadBan(link.battletag_key))
+  if (banned) return res.status(403).json(banned)
 
   let profile
   try {
@@ -572,12 +615,39 @@ app.post('/api/auth/logout', asyncRoute(async (req, res) => {
 }))
 
 /* ------------------------------------------------------------------ *
- * Admin: promote another user to role=admin
+ * Admin: look up / promote / ban (BattleTag-keyed, timed or permanent)
  * ------------------------------------------------------------------ */
+function requireAdmin(auth, res) {
+  if (!auth) {
+    res.status(401).json({ error: 'UNAUTHENTICATED' })
+    return false
+  }
+  if (!isAdmin(auth.user)) {
+    res.status(403).json({ error: 'ADMIN_ONLY' })
+    return false
+  }
+  return true
+}
+
+app.get('/api/admin/user', asyncRoute(async (req, res) => {
+  const auth = await authenticate(req)
+  if (!requireAdmin(auth, res)) return
+
+  const username = String(req.query.username ?? '').trim()
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: 'INVALID_USERNAME' })
+  }
+
+  const target = await findUser.get(normalizeUsername(username))
+  if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+
+  const ban = await loadBan(target.battletag_key)
+  return res.json({ user: toModerationUser(target, ban) })
+}))
+
 app.post('/api/admin/promote', asyncRoute(async (req, res) => {
   const auth = await authenticate(req)
-  if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
-  if (!isAdmin(auth.user)) return res.status(403).json({ error: 'ADMIN_ONLY' })
+  if (!requireAdmin(auth, res)) return
 
   const username = String(req.body?.username ?? '').trim()
   if (!isValidUsername(username)) {
@@ -587,13 +657,71 @@ app.post('/api/admin/promote', asyncRoute(async (req, res) => {
   const targetKey = normalizeUsername(username)
   const target = await findUser.get(targetKey)
   if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+  if (target.username_key === auth.user.username_key) {
+    return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
+  }
 
   if (!isAdmin(target)) {
     await promoteUserRole.run(targetKey)
   }
 
   const row = await findUser.get(targetKey)
-  return res.json({ user: toPublicUser(row) })
+  const ban = await loadBan(row.battletag_key)
+  return res.json({ user: toModerationUser(row, ban) })
+}))
+
+app.post('/api/admin/ban', asyncRoute(async (req, res) => {
+  const auth = await authenticate(req)
+  if (!requireAdmin(auth, res)) return
+
+  const username = String(req.body?.username ?? '').trim()
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: 'INVALID_USERNAME' })
+  }
+  const parsed = parseBanDuration(req.body?.duration)
+  if (!parsed) {
+    return res.status(400).json({ error: 'INVALID_BAN_DURATION' })
+  }
+
+  const target = await findUser.get(normalizeUsername(username))
+  if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+  if (target.username_key === auth.user.username_key) {
+    return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
+  }
+  if (isAdmin(target)) {
+    return res.status(403).json({ error: 'CANNOT_BAN_ADMIN' })
+  }
+
+  await upsertBan.run(
+    target.battletag_key,
+    target.battletag,
+    parsed.key,
+    parsed.expiresAt,
+    auth.user.username_key,
+    Date.now(),
+  )
+
+  const ban = await loadBan(target.battletag_key)
+  return res.json({ user: toModerationUser(target, ban) })
+}))
+
+app.post('/api/admin/unban', asyncRoute(async (req, res) => {
+  const auth = await authenticate(req)
+  if (!requireAdmin(auth, res)) return
+
+  const username = String(req.body?.username ?? '').trim()
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: 'INVALID_USERNAME' })
+  }
+
+  const target = await findUser.get(normalizeUsername(username))
+  if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+  if (target.username_key === auth.user.username_key) {
+    return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
+  }
+
+  await deleteBan.run(target.battletag_key)
+  return res.json({ user: toModerationUser(target, null) })
 }))
 
 /* ------------------------------------------------------------------ *

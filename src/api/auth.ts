@@ -53,12 +53,76 @@ export interface BlizzardLink {
 export class ApiError extends Error {
   code: string
   httpStatus: number
-  constructor(httpStatus: number, code: string, message?: string) {
+  remainingMs: number | null
+  banExpiresAt: number | null
+  constructor(
+    httpStatus: number,
+    code: string,
+    message?: string,
+    extras?: { remainingMs?: number | null; banExpiresAt?: number | null },
+  ) {
     super(message ?? code)
     this.name = 'ApiError'
     this.code = code
     this.httpStatus = httpStatus
+    this.remainingMs = extras?.remainingMs ?? null
+    this.banExpiresAt = extras?.banExpiresAt ?? null
   }
+}
+
+export function extrasFromErrorBody(data: unknown): {
+  remainingMs?: number | null
+  banExpiresAt?: number | null
+} {
+  if (!data || typeof data !== 'object') return {}
+  const body = data as { remainingMs?: unknown; banExpiresAt?: unknown }
+  return {
+    remainingMs:
+      body.remainingMs === null || typeof body.remainingMs === 'number' ? body.remainingMs : undefined,
+    banExpiresAt:
+      body.banExpiresAt === null || typeof body.banExpiresAt === 'number'
+        ? body.banExpiresAt
+        : undefined,
+  }
+}
+
+/** Human-readable remaining ban time, e.g. "47분", "1시간 12분". */
+export function formatBanRemaining(remainingMs: number): string {
+  const ms = Math.max(0, remainingMs)
+  const totalSec = Math.ceil(ms / 1000)
+  if (totalSec < 60) return `${Math.max(1, totalSec)}초`
+  const totalMin = Math.ceil(ms / 60_000)
+  if (totalMin < 60) return `${totalMin}분`
+  const hours = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  if (hours < 24) return mins > 0 ? `${hours}시간 ${mins}분` : `${hours}시간`
+  const days = Math.floor(hours / 24)
+  const remHours = hours % 24
+  return remHours > 0 ? `${days}일 ${remHours}시간` : `${days}일`
+}
+
+export function bannedUserMessage(
+  err: ApiError,
+  action: 'write' | 'register' | 'link' = 'write',
+): string {
+  const remaining =
+    err.remainingMs != null ? err.remainingMs : err.banExpiresAt != null ? err.banExpiresAt - Date.now() : null
+  if (remaining == null) {
+    if (action === 'write') return '영구 차단되어 글을 쓸 수 없습니다.'
+    if (action === 'link') return '영구 차단된 배틀태그입니다. 연동할 수 없습니다.'
+    return '영구 차단된 배틀태그입니다. 가입할 수 없습니다.'
+  }
+  if (remaining <= 0) return '차단이 곧 해제됩니다. 잠시 후 다시 시도해 주세요.'
+  const left = formatBanRemaining(remaining)
+  if (action === 'write') return `차단되어 글을 쓸 수 없습니다. 남은 시간: ${left}`
+  return `차단된 배틀태그입니다. 남은 시간: ${left}`
+}
+
+export function boardErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError && err.code === 'BANNED') return bannedUserMessage(err, 'write')
+  if (err instanceof ApiError && err.code === 'UNAUTHENTICATED') return '로그인이 필요합니다.'
+  if (err instanceof ApiError && err.code === 'TIER_NOT_ALLOWED') return '자격 티어가 아닙니다.'
+  return fallback
 }
 
 const USERNAME_RE = /^[A-Za-z0-9가-힣_]{3,16}$/
@@ -91,7 +155,7 @@ async function handle<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const err = data as { error?: string; message?: string } | null
-    throw new ApiError(res.status, err?.error ?? 'UNKNOWN', err?.message)
+    throw new ApiError(res.status, err?.error ?? 'UNKNOWN', err?.message, extrasFromErrorBody(data))
   }
   return data as T
 }
@@ -107,6 +171,16 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path))
+  return handle<T>(res)
+}
+
+async function authedGet<T>(path: string): Promise<T> {
+  const token = getToken()
+  const res = await fetch(apiUrl(path), {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  })
   return handle<T>(res)
 }
 
@@ -294,8 +368,37 @@ export async function logout(): Promise<void> {
   clearToken()
 }
 
+export type BanDuration = '1h' | '1d' | 'permanent'
+
+export interface ModeratedUser {
+  username: string
+  battletag: string
+  isAdmin: boolean
+  isBanned: boolean
+  banExpiresAt: number | null
+  banDuration: string | null
+}
+
+export async function fetchModeratedUser(username: string): Promise<ModeratedUser> {
+  const { user } = await authedGet<{ user: ModeratedUser }>(
+    `/admin/user?username=${encodeURIComponent(username)}`,
+  )
+  return user
+}
+
 /** Promote another account to admin. Caller must already be an admin. */
-export async function promoteToAdmin(username: string): Promise<AuthUser> {
-  const { user } = await authedPost<{ user: AuthUser }>('/admin/promote', { username })
+export async function promoteToAdmin(username: string): Promise<ModeratedUser> {
+  const { user } = await authedPost<{ user: ModeratedUser }>('/admin/promote', { username })
+  return user
+}
+
+/** Ban the BattleTag behind this nickname. Duration is 1h / 1d / permanent. */
+export async function banUser(username: string, duration: BanDuration): Promise<ModeratedUser> {
+  const { user } = await authedPost<{ user: ModeratedUser }>('/admin/ban', { username, duration })
+  return user
+}
+
+export async function unbanUser(username: string): Promise<ModeratedUser> {
+  const { user } = await authedPost<{ user: ModeratedUser }>('/admin/unban', { username })
   return user
 }

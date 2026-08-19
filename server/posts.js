@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import db from './db.js'
 import { isAdmin } from './admins.js'
+import { isBanActive, banErrorBody } from './bans.js'
 import { isTierAllowed, isValidTierKey, parseAllowedTiers, TIER_ORDER } from './tiers.js'
 
 const TITLE_MAX = 100
@@ -12,7 +13,7 @@ const FEEDBACK_NOTE_MAX = 500
 const COMMENT_MAX = 500
 const POLL_OPTION_MAX = 40
 const POLL_MIN_OPTIONS = 2
-const POLL_MAX_OPTIONS = 5
+const POLL_MAX_OPTIONS = 10
 const LIST_DEFAULT_LIMIT = 20
 const LIST_MAX_LIMIT = 50
 
@@ -80,6 +81,9 @@ const listPostsPaged = db.prepare(`
   SELECT
     p.*,
     u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    u.battletag_key,
+    b.battletag_key AS banned_battletag_key,
+    b.expires_at AS ban_expires_at,
     CASE
       WHEN p.type IN ('tip', 'feedback') THEN (
         SELECT COUNT(*) FROM post_comments c WHERE c.post_id = p.id
@@ -100,15 +104,21 @@ const listPostsPaged = db.prepare(`
     END AS vote_count
   FROM paged_posts p
   JOIN users u ON u.username_key = p.author_username_key
+  LEFT JOIN banned_battletags b ON b.battletag_key = u.battletag_key
   ORDER BY p.is_notice DESC, p.created_at DESC, p.id DESC
 `)
 const countPosts = db.prepare(`
   SELECT COUNT(*) AS n FROM posts WHERE (? IS NULL OR type = ?)
 `)
 const findPostWithAuthor = db.prepare(`
-  SELECT p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes
+  SELECT
+    p.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    u.battletag_key,
+    b.battletag_key AS banned_battletag_key,
+    b.expires_at AS ban_expires_at
   FROM posts p
   JOIN users u ON u.username_key = p.author_username_key
+  LEFT JOIN banned_battletags b ON b.battletag_key = u.battletag_key
   WHERE p.id = ?
 `)
 
@@ -149,6 +159,9 @@ const findComment = db.prepare('SELECT * FROM post_comments WHERE id = ?')
 const listComments = db.prepare(`
   SELECT
     c.*, u.username, u.role, u.rank_label, u.rank_icon, u.rank_role, u.most_heroes,
+    u.battletag_key,
+    b.battletag_key AS banned_battletag_key,
+    b.expires_at AS ban_expires_at,
     (SELECT COUNT(*) FROM post_comment_upvotes v WHERE v.comment_id = c.id) AS upvote_count,
     EXISTS(
       SELECT 1 FROM post_comment_upvotes v
@@ -156,6 +169,7 @@ const listComments = db.prepare(`
     ) AS upvoted_by_me
   FROM post_comments c
   JOIN users u ON u.username_key = c.username_key
+  LEFT JOIN banned_battletags b ON b.battletag_key = u.battletag_key
   WHERE c.post_id = ?
   ORDER BY c.created_at ASC
 `)
@@ -236,10 +250,17 @@ function parseMostHeroes(raw) {
   }
 }
 
-function toPublicAuthor(row) {
+function toPublicAuthor(row, viewerIsAdmin = false) {
   return {
     username: row.username,
     isAdmin: isAdmin(row),
+    isBanned: viewerIsAdmin
+      ? isBanActive(
+          row.banned_battletag_key
+            ? { expires_at: row.ban_expires_at }
+            : null,
+        )
+      : false,
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     roleLabel: roleLabelOf(row.rank_role),
@@ -266,7 +287,7 @@ function toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin = false
     id: row.id,
     type: row.type,
     title: row.title,
-    author: toPublicAuthor(row),
+    author: toPublicAuthor(row, viewerIsAdmin),
     allowedTiers,
     viewerEligible: isTierAllowed(viewerRankLabel, allowedTiers),
     isNotice: Boolean(row.is_notice),
@@ -325,12 +346,19 @@ function toPublicComment(row, viewerKey, viewerIsAdmin = false) {
     content: row.content,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
-    author: toPublicAuthor(row),
+    author: toPublicAuthor(row, viewerIsAdmin),
     upvotes: row.upvote_count ?? 0,
     upvotedByMe: Boolean(row.upvoted_by_me),
     isMine: viewerKey ? row.username_key === viewerKey : false,
     canDelete: (viewerKey ? row.username_key === viewerKey : false) || viewerIsAdmin,
   }
+}
+
+function rejectIfBanned(auth, res) {
+  const body = banErrorBody(auth?.ban)
+  if (!body) return false
+  res.status(403).json(body)
+  return true
 }
 
 function sanitizeAllowedTiers(raw) {
@@ -346,7 +374,7 @@ function sanitizeAllowedTiers(raw) {
 
 /**
  * @param {import('express').Express} app
- * @param {{ authenticate: (req: import('express').Request) => Promise<{ user: any, token: string } | null> }} deps
+ * @param {{ authenticate: (req: import('express').Request) => Promise<{ user: any, token: string, ban?: any } | null> }} deps
  */
 export function registerPostRoutes(app, { authenticate }) {
   app.get('/api/posts', asyncRoute(async (req, res) => {
@@ -395,6 +423,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.post('/api/posts', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const type = String(req.body?.type ?? '')
     if (!POST_TYPES.includes(type)) return res.status(400).json({ error: 'INVALID_TYPE' })
@@ -496,6 +525,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.patch('/api/posts/:id', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const row = await findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
@@ -614,6 +644,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.post('/api/posts/:id/comments', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const post = await findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })
@@ -690,6 +721,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.patch('/api/posts/comments/:id', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
@@ -738,6 +770,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.post('/api/posts/comments/:id/upvote', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
@@ -764,6 +797,7 @@ export function registerPostRoutes(app, { authenticate }) {
   app.post('/api/posts/:id/vote', asyncRoute(async (req, res) => {
     const auth = await authenticate(req)
     if (!auth) return res.status(401).json({ error: 'UNAUTHENTICATED' })
+    if (rejectIfBanned(auth, res)) return
 
     const post = await findPostRow.get(req.params.id)
     if (!post) return res.status(404).json({ error: 'NOT_FOUND' })

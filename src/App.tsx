@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import AuthFlow from './auth/AuthFlow'
-import { ApiError, applyBlizzardLink, fetchMe, linkBlizzard, logout } from './api/auth'
+import { ApiError, applyBlizzardLink, bannedUserMessage, fetchMe, linkBlizzard, logout } from './api/auth'
 import type { AuthUser } from './api/auth'
 import RankBadge from './components/RankBadge'
 import Board from './board/Board'
+import { AdminSessionProvider } from './board/AdminSession'
 import './App.css'
 
 export default function App() {
@@ -48,6 +49,8 @@ export default function App() {
         // User cancelled from the UI — nothing to report.
       } else if (err instanceof ApiError && err.code === 'BATTLETAG_TAKEN') {
         window.alert('이미 다른 계정에 연동된 배틀태그입니다.')
+      } else if (err instanceof ApiError && err.code === 'BANNED') {
+        window.alert(bannedUserMessage(err, 'link'))
       } else if (err instanceof ApiError && err.code === 'POPUP_BLOCKED') {
         window.alert('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도해 주세요.')
       } else {
@@ -119,7 +122,9 @@ export default function App() {
         </main>
       ) : (
         <main className="board">
-          <Board isAdmin={Boolean(user.isAdmin)} />
+          <AdminSessionProvider viewerUsername={user.username} viewerIsAdmin={Boolean(user.isAdmin)}>
+            <Board isAdmin={Boolean(user.isAdmin)} />
+          </AdminSessionProvider>
         </main>
       )}
 

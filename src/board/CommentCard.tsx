@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { boardErrorMessage } from '../api/auth'
 import type { PostComment } from '../api/posts'
 import RankBadge from '../components/RankBadge'
+import UsernameButton from './UsernameButton'
 import { formatTimestamp } from './time'
 
 const HIGHLIGHT_WINDOW_SECONDS = 5
@@ -71,8 +73,8 @@ export default function CommentCard({
     try {
       await onEdit(comment.id, trimmed)
       setIsEditing(false)
-    } catch {
-      window.alert('댓글 수정에 실패했습니다. 다시 시도해 주세요.')
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '댓글 수정에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setEditSubmitting(false)
     }
@@ -95,9 +97,12 @@ export default function CommentCard({
       }`}
     >
       <div className="comment-card__header">
-        <span className={`comment-card__tag${comment.author.isAdmin ? ' username--admin' : ''}`}>
-          {comment.author.username}
-        </span>
+        <UsernameButton
+          username={comment.author.username}
+          isAdmin={comment.author.isAdmin}
+          isBanned={comment.author.isBanned}
+          className="comment-card__tag"
+        />
         <RankBadge
           rankLabel={comment.author.rankLabel}
           rankIcon={comment.author.rankIcon}

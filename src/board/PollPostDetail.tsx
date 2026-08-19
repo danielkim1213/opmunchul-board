@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
-import { ApiError } from '../api/auth'
+import { boardErrorMessage } from '../api/auth'
 import { deletePost, votePoll, TIER_LABEL_KO } from '../api/posts'
 import type { PollOption, PollPostDetail as PollPost } from '../api/posts'
 import RankBadge from '../components/RankBadge'
+import UsernameButton from './UsernameButton'
 import TierIcon from '../components/TierIcon'
 
 interface PollPostDetailProps {
@@ -49,13 +50,7 @@ export default function PollPostDetail({ post, onBack, onEdit, onDeleted }: Poll
       setTotalVotes(result.totalVotes)
       setMyOptionId(result.myOptionId)
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.code === 'UNAUTHENTICATED'
-          ? '로그인이 필요합니다.'
-          : err instanceof ApiError && err.code === 'TIER_NOT_ALLOWED'
-            ? '자격 티어가 아닙니다.'
-            : '투표에 실패했습니다. 다시 시도해 주세요.',
-      )
+      setError(boardErrorMessage(err, '투표에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       votingRef.current = false
     }
@@ -97,9 +92,12 @@ export default function PollPostDetail({ post, onBack, onEdit, onDeleted }: Poll
           {post.title}
         </h1>
         <div className="post-detail__author">
-          <span className={`post-detail__tag${post.author.isAdmin ? ' username--admin' : ''}`}>
-            {post.author.username}
-          </span>
+          <UsernameButton
+            username={post.author.username}
+            isAdmin={post.author.isAdmin}
+            isBanned={post.author.isBanned}
+            className="post-detail__tag"
+          />
           <RankBadge
             rankLabel={post.author.rankLabel}
             rankIcon={post.author.rankIcon}

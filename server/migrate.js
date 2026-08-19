@@ -184,6 +184,19 @@ export async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_poll_votes_post
       ON post_poll_votes(post_id);
   `)
+
+  // BattleTag-keyed bans (permanent or timed). Recreating a nickname must
+  // not bypass a ban, so this is keyed by battletag_key, not username.
+  await client.execute(`
+    CREATE TABLE IF NOT EXISTS banned_battletags (
+      battletag_key           TEXT PRIMARY KEY,
+      battletag               TEXT NOT NULL,
+      duration                TEXT NOT NULL,
+      expires_at              INTEGER,
+      banned_by_username_key  TEXT NOT NULL,
+      created_at              INTEGER NOT NULL
+    )
+  `)
 }
 
 // Allows `npm run db:migrate` to run this file as a one-shot script.

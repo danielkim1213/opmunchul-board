@@ -1,6 +1,6 @@
 // Board posts API client — replaces api/vod.ts now that VOD review is one of
 // three post types (tip / feedback / poll) living in a real board.
-import { ApiError, getToken } from './auth'
+import { ApiError, extrasFromErrorBody, getToken } from './auth'
 import type { MostHero } from './auth'
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
@@ -55,6 +55,8 @@ export interface PostAuthor {
   username: string
   /** Admin accounts get distinct username styling. */
   isAdmin: boolean
+  /** Only true for admin viewers when the author's BattleTag is currently banned. */
+  isBanned: boolean
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -128,6 +130,8 @@ export interface PostCommentAuthor {
   username: string
   /** Admin accounts get distinct username styling. */
   isAdmin: boolean
+  /** Only true for admin viewers when the author's BattleTag is currently banned. */
+  isBanned: boolean
   rankLabel: string
   rankIcon: string | null
   roleLabel: string | null
@@ -188,7 +192,7 @@ async function handle<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     const err = data as { error?: string; message?: string } | null
-    throw new ApiError(res.status, err?.error ?? 'UNKNOWN', err?.message)
+    throw new ApiError(res.status, err?.error ?? 'UNKNOWN', err?.message, extrasFromErrorBody(data))
   }
   return data as T
 }
