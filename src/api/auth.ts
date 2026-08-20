@@ -124,6 +124,10 @@ export function boardErrorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError && err.code === 'BANNED') return bannedUserMessage(err, 'write')
   if (err instanceof ApiError && err.code === 'UNAUTHENTICATED') return '로그인이 필요합니다.'
   if (err instanceof ApiError && err.code === 'TIER_NOT_ALLOWED') return '자격 티어가 아닙니다.'
+  if (err instanceof ApiError && err.code === 'CANNOT_DELETE_FOUNDER_CONTENT') {
+    return '이 글/댓글은 작성자만 삭제할 수 있습니다.'
+  }
+  if (err instanceof ApiError && err.code === 'FORBIDDEN') return '삭제 권한이 없습니다.'
   return fallback
 }
 

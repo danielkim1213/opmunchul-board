@@ -3,7 +3,7 @@
 // nullable type-specific columns; comments/votes are gated by allowed_tiers.
 import { randomUUID } from 'node:crypto'
 import db from './db.js'
-import { isAdmin } from './admins.js'
+import { isAdmin, isFounder, FOUNDER_USERNAME_KEY } from './admins.js'
 import { isBanActive, banErrorBody } from './bans.js'
 import { isTierAllowed, isValidTierKey, parseAllowedTiers, TIER_ORDER } from './tiers.js'
 
@@ -230,6 +230,22 @@ function deleteCommentCascade(commentId) {
   ])
 }
 
+const countFounderCommentsOnPost = db.prepare(
+  'SELECT COUNT(*) AS n FROM post_comments WHERE post_id = ? AND username_key = ?',
+)
+const countFounderCommentsInTree = db.prepare(`
+  ${COMMENT_TREE_CTE}
+  SELECT COUNT(*) AS n FROM post_comments
+  WHERE id IN (SELECT id FROM tree) AND username_key = ?
+`)
+
+function canDeleteAuthoredBy(authorKey, viewerKey, viewerIsAdmin) {
+  const isMine = Boolean(viewerKey && authorKey === viewerKey)
+  // Founder posts/comments are only deletable by the founder (the author).
+  if (isFounder({ username_key: authorKey })) return isMine
+  return isMine || viewerIsAdmin
+}
+
 function roleLabelOf(rankRole) {
   return rankRole === 'tank'
     ? '탱커'
@@ -294,8 +310,8 @@ function toPublicPostBase(row, viewerRankLabel, viewerKey, viewerIsAdmin = false
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? null,
     isMine,
-    /** Admins may delete any post (moderation); editing stays author-only. */
-    canDelete: isMine || viewerIsAdmin,
+    /** Admins may delete others' posts; founder-authored posts are author-only. */
+    canDelete: canDeleteAuthoredBy(row.author_username_key, viewerKey, viewerIsAdmin),
   }
 }
 
@@ -350,7 +366,7 @@ function toPublicComment(row, viewerKey, viewerIsAdmin = false) {
     upvotes: row.upvote_count ?? 0,
     upvotedByMe: Boolean(row.upvoted_by_me),
     isMine: viewerKey ? row.username_key === viewerKey : false,
-    canDelete: (viewerKey ? row.username_key === viewerKey : false) || viewerIsAdmin,
+    canDelete: canDeleteAuthoredBy(row.username_key, viewerKey, viewerIsAdmin),
   }
 }
 
@@ -607,9 +623,18 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const row = await findPostRow.get(req.params.id)
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' })
-    // Admins may delete any post (moderation power).
-    if (row.author_username_key !== auth.user.username_key && !isAdmin(auth.user)) {
-      return res.status(403).json({ error: 'FORBIDDEN' })
+    if (!canDeleteAuthoredBy(row.author_username_key, auth.user.username_key, isAdmin(auth.user))) {
+      return res.status(403).json({
+        error: isFounder({ username_key: row.author_username_key })
+          ? 'CANNOT_DELETE_FOUNDER_CONTENT'
+          : 'FORBIDDEN',
+      })
+    }
+    if (
+      !isFounder(auth.user) &&
+      (await countFounderCommentsOnPost.get(row.id, FOUNDER_USERNAME_KEY)).n > 0
+    ) {
+      return res.status(403).json({ error: 'CANNOT_DELETE_FOUNDER_CONTENT' })
     }
 
     await deletePostCascade(row.id)
@@ -758,9 +783,18 @@ export function registerPostRoutes(app, { authenticate }) {
 
     const comment = await findComment.get(req.params.id)
     if (!comment) return res.status(404).json({ error: 'NOT_FOUND' })
-    // Admins may delete any comment (moderation power).
-    if (comment.username_key !== auth.user.username_key && !isAdmin(auth.user)) {
-      return res.status(403).json({ error: 'FORBIDDEN' })
+    if (!canDeleteAuthoredBy(comment.username_key, auth.user.username_key, isAdmin(auth.user))) {
+      return res.status(403).json({
+        error: isFounder({ username_key: comment.username_key })
+          ? 'CANNOT_DELETE_FOUNDER_CONTENT'
+          : 'FORBIDDEN',
+      })
+    }
+    if (
+      !isFounder(auth.user) &&
+      (await countFounderCommentsInTree.get(comment.id, FOUNDER_USERNAME_KEY)).n > 0
+    ) {
+      return res.status(403).json({ error: 'CANNOT_DELETE_FOUNDER_CONTENT' })
     }
 
     await deleteCommentCascade(comment.id)

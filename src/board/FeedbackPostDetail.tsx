@@ -181,8 +181,8 @@ export default function FeedbackPostDetail({ post, onBack, onEdit, onDeleted }: 
     try {
       await deletePost(post.id)
       onDeleted()
-    } catch {
-      window.alert('삭제에 실패했습니다. 다시 시도해 주세요.')
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '삭제에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setDeletingPost(false)
     }

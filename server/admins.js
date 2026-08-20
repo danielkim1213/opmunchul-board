@@ -3,7 +3,7 @@
 // inferred from username. The founding account (kyw4091) can also demote
 // or ban other admins; nobody can moderate that account.
 
-const FOUNDER_USERNAME_KEY = 'kyw4091'
+export const FOUNDER_USERNAME_KEY = 'kyw4091'
 
 /** @typedef {'user' | 'admin'} UserRole */
 

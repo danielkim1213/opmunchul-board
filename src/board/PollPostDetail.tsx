@@ -32,8 +32,8 @@ export default function PollPostDetail({ post, onBack, onEdit, onDeleted }: Poll
     try {
       await deletePost(post.id)
       onDeleted()
-    } catch {
-      window.alert('삭제에 실패했습니다. 다시 시도해 주세요.')
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '삭제에 실패했습니다. 다시 시도해 주세요.'))
     } finally {
       setDeleting(false)
     }

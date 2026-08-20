@@ -84,8 +84,8 @@ export default function CommentCard({
     if (!window.confirm('댓글을 삭제하시겠어요? 답글도 함께 삭제됩니다.')) return
     try {
       await onDelete(comment.id)
-    } catch {
-      window.alert('댓글 삭제에 실패했습니다. 다시 시도해 주세요.')
+    } catch (err) {
+      window.alert(boardErrorMessage(err, '댓글 삭제에 실패했습니다. 다시 시도해 주세요.'))
     }
   }
 
@@ -188,7 +188,7 @@ export default function CommentCard({
             ✏️ 수정
           </button>
         )}
-        {(comment.canDelete || comment.isMine) && !isEditing && (
+        {(comment.canDelete) && !isEditing && (
           <button type="button" className="action-btn action-btn--danger" onClick={handleDelete}>
             🗑 삭제
           </button>
