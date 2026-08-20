@@ -25,7 +25,7 @@ import {
   isBlizzardConfigured,
 } from './blizzard.js'
 import { registerPostRoutes } from './posts.js'
-import { isAdmin } from './admins.js'
+import { isAdmin, isFounder, canModerateAdmins } from './admins.js'
 import { isBanActive, parseBanDuration, banErrorBody } from './bans.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -116,6 +116,9 @@ const insertUser = db.prepare(`
 const promoteUserRole = db.prepare(`
   UPDATE users SET role = 'admin' WHERE username_key = ?
 `)
+const demoteUserRole = db.prepare(`
+  UPDATE users SET role = 'user' WHERE username_key = ?
+`)
 const updateRankDetails = db.prepare(`
   UPDATE users
   SET rank_label = ?,
@@ -197,6 +200,7 @@ function toPublicUser(row) {
     username: row.username,
     battletag: row.battletag,
     isAdmin: isAdmin(row),
+    isFounder: isFounder(row),
     rankLabel: row.rank_label,
     rankIcon: row.rank_icon,
     rankRole: row.rank_role ?? null,
@@ -221,6 +225,7 @@ function toModerationUser(row, ban) {
     username: row.username,
     battletag: row.battletag,
     isAdmin: isAdmin(row),
+    isFounder: isFounder(row),
     isBanned: banned,
     banExpiresAt: banned ? (ban.expires_at ?? null) : null,
     banDuration: banned ? (ban.duration ?? null) : null,
@@ -660,9 +665,43 @@ app.post('/api/admin/promote', asyncRoute(async (req, res) => {
   if (target.username_key === auth.user.username_key) {
     return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
   }
+  if (isFounder(target)) {
+    return res.status(403).json({ error: 'CANNOT_MODERATE_FOUNDER' })
+  }
 
   if (!isAdmin(target)) {
     await promoteUserRole.run(targetKey)
+  }
+
+  const row = await findUser.get(targetKey)
+  const ban = await loadBan(row.battletag_key)
+  return res.json({ user: toModerationUser(row, ban) })
+}))
+
+app.post('/api/admin/demote', asyncRoute(async (req, res) => {
+  const auth = await authenticate(req)
+  if (!requireAdmin(auth, res)) return
+
+  const username = String(req.body?.username ?? '').trim()
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: 'INVALID_USERNAME' })
+  }
+
+  const targetKey = normalizeUsername(username)
+  const target = await findUser.get(targetKey)
+  if (!target) return res.status(404).json({ error: 'NOT_FOUND' })
+  if (target.username_key === auth.user.username_key) {
+    return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
+  }
+  if (isFounder(target)) {
+    return res.status(403).json({ error: 'CANNOT_MODERATE_FOUNDER' })
+  }
+  if (isAdmin(target) && !canModerateAdmins(auth.user)) {
+    return res.status(403).json({ error: 'CANNOT_MODERATE_ADMIN' })
+  }
+
+  if (isAdmin(target)) {
+    await demoteUserRole.run(targetKey)
   }
 
   const row = await findUser.get(targetKey)
@@ -688,8 +727,15 @@ app.post('/api/admin/ban', asyncRoute(async (req, res) => {
   if (target.username_key === auth.user.username_key) {
     return res.status(400).json({ error: 'CANNOT_MODERATE_SELF' })
   }
+  if (isFounder(target)) {
+    return res.status(403).json({ error: 'CANNOT_MODERATE_FOUNDER' })
+  }
+  if (isAdmin(target) && !canModerateAdmins(auth.user)) {
+    return res.status(403).json({ error: 'CANNOT_MODERATE_ADMIN' })
+  }
+
   if (isAdmin(target)) {
-    return res.status(403).json({ error: 'CANNOT_BAN_ADMIN' })
+    await demoteUserRole.run(target.username_key)
   }
 
   await upsertBan.run(
@@ -701,8 +747,9 @@ app.post('/api/admin/ban', asyncRoute(async (req, res) => {
     Date.now(),
   )
 
-  const ban = await loadBan(target.battletag_key)
-  return res.json({ user: toModerationUser(target, ban) })
+  const row = await findUser.get(target.username_key)
+  const ban = await loadBan(row.battletag_key)
+  return res.json({ user: toModerationUser(row, ban) })
 }))
 
 app.post('/api/admin/unban', asyncRoute(async (req, res) => {

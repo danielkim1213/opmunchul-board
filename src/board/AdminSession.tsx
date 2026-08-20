@@ -9,6 +9,7 @@ interface UserFlags {
 interface AdminSessionValue {
   viewerUsername: string
   viewerIsAdmin: boolean
+  viewerIsFounder: boolean
   flags: Record<string, UserFlags>
   patchFlags: (username: string, next: UserFlags) => void
 }
@@ -18,10 +19,12 @@ const AdminSessionContext = createContext<AdminSessionValue | null>(null)
 export function AdminSessionProvider({
   viewerUsername,
   viewerIsAdmin,
+  viewerIsFounder,
   children,
 }: {
   viewerUsername: string
   viewerIsAdmin: boolean
+  viewerIsFounder: boolean
   children: ReactNode
 }) {
   const [flags, setFlags] = useState<Record<string, UserFlags>>({})
@@ -29,8 +32,8 @@ export function AdminSessionProvider({
     setFlags((prev) => ({ ...prev, [username]: next }))
   }, [])
   const value = useMemo(
-    () => ({ viewerUsername, viewerIsAdmin, flags, patchFlags }),
-    [viewerUsername, viewerIsAdmin, flags, patchFlags],
+    () => ({ viewerUsername, viewerIsAdmin, viewerIsFounder, flags, patchFlags }),
+    [viewerUsername, viewerIsAdmin, viewerIsFounder, flags, patchFlags],
   )
   return <AdminSessionContext.Provider value={value}>{children}</AdminSessionContext.Provider>
 }

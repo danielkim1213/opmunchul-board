@@ -27,6 +27,8 @@ export interface AuthUser {
   battletag: string
   /** Admin accounts can pin notices and moderate (delete) any post/comment. */
   isAdmin: boolean
+  /** Founding admin (kyw4091) may demote or ban other admins. */
+  isFounder: boolean
   rankLabel: string
   rankIcon: string | null
   rankRole: string | null
@@ -374,6 +376,7 @@ export interface ModeratedUser {
   username: string
   battletag: string
   isAdmin: boolean
+  isFounder: boolean
   isBanned: boolean
   banExpiresAt: number | null
   banDuration: string | null
@@ -389,6 +392,12 @@ export async function fetchModeratedUser(username: string): Promise<ModeratedUse
 /** Promote another account to admin. Caller must already be an admin. */
 export async function promoteToAdmin(username: string): Promise<ModeratedUser> {
   const { user } = await authedPost<{ user: ModeratedUser }>('/admin/promote', { username })
+  return user
+}
+
+/** Demote an admin back to a regular user. Only the founding admin may do this. */
+export async function demoteFromAdmin(username: string): Promise<ModeratedUser> {
+  const { user } = await authedPost<{ user: ModeratedUser }>('/admin/demote', { username })
   return user
 }
 

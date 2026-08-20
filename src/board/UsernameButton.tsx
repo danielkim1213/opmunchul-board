@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { ApiError, banUser, fetchModeratedUser, formatBanRemaining, promoteToAdmin, unbanUser } from '../api/auth'
+import { ApiError, banUser, demoteFromAdmin, fetchModeratedUser, formatBanRemaining, promoteToAdmin, unbanUser } from '../api/auth'
 import type { BanDuration, ModeratedUser } from '../api/auth'
 import { useAdminSession } from './AdminSession'
 
@@ -28,6 +28,8 @@ interface UsernameButtonProps {
 function moderationErrorMessage(err: unknown): string {
   if (!(err instanceof ApiError)) return '처리에 실패했습니다. 다시 시도해 주세요.'
   if (err.code === 'CANNOT_MODERATE_SELF') return '본인 계정은 처리할 수 없습니다.'
+  if (err.code === 'CANNOT_MODERATE_FOUNDER') return '이 계정은 하향하거나 차단할 수 없습니다.'
+  if (err.code === 'CANNOT_MODERATE_ADMIN') return '관리자 계정은 하향하거나 차단할 수 없습니다.'
   if (err.code === 'CANNOT_BAN_ADMIN') return '관리자 계정은 차단할 수 없습니다.'
   if (err.code === 'NOT_FOUND') return '해당 사용자를 찾을 수 없습니다.'
   return '처리에 실패했습니다. 다시 시도해 주세요.'
@@ -133,13 +135,29 @@ export default function UsernameButton({
     }
   }
 
+  async function handleDemote(e: MouseEvent) {
+    e.stopPropagation()
+    if (!window.confirm(`${username} 님의 관리자 권한을 해제할까요?`)) return
+    setBusy(true)
+    try {
+      apply(await demoteFromAdmin(username))
+      setOpen(false)
+    } catch (err) {
+      window.alert(moderationErrorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleBan(e: MouseEvent, duration: BanDuration) {
     e.stopPropagation()
     const tag = detail?.battletag ?? username
     const when = duration === 'permanent' ? '영구 차단' : `${BAN_DURATION_LABEL[duration] ?? duration} 동안 차단`
     if (
       !window.confirm(
-        `배틀태그 ${tag} 를 ${when}합니다.\n같은 배틀태그로는 로그인·재가입할 수 없습니다.`,
+        detail?.isAdmin
+          ? `배틀태그 ${tag} 를 ${when}합니다.\n관리자 권한도 함께 해제되며, 같은 배틀태그로는 글·댓글·투표를 할 수 없습니다.`
+          : `배틀태그 ${tag} 를 ${when}합니다.\n같은 배틀태그로는 로그인·재가입할 수 없습니다.`,
       )
     ) {
       return
@@ -213,8 +231,22 @@ export default function UsernameButton({
                   관리자로 승격
                 </button>
               )}
-              {detail.isAdmin ? (
-                <p className="user-mod-menu__hint">관리자 계정은 차단할 수 없습니다.</p>
+              {detail.isAdmin && session?.viewerIsFounder && !detail.isFounder && (
+                <button
+                  type="button"
+                  className="user-mod-menu__item"
+                  disabled={busy}
+                  onClick={handleDemote}
+                >
+                  관리자 하향
+                </button>
+              )}
+              {detail.isAdmin && !(session?.viewerIsFounder && !detail.isFounder) ? (
+                <p className="user-mod-menu__hint">
+                  {detail.isFounder
+                    ? '이 계정은 하향하거나 차단할 수 없습니다.'
+                    : '관리자 계정은 하향하거나 차단할 수 없습니다.'}
+                </p>
               ) : (
                 <div className="user-mod-menu__bans">
                   <span className="user-mod-menu__label">

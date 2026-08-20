@@ -122,7 +122,11 @@ export default function App() {
         </main>
       ) : (
         <main className="board">
-          <AdminSessionProvider viewerUsername={user.username} viewerIsAdmin={Boolean(user.isAdmin)}>
+          <AdminSessionProvider
+            viewerUsername={user.username}
+            viewerIsAdmin={Boolean(user.isAdmin)}
+            viewerIsFounder={Boolean(user.isFounder)}
+          >
             <Board isAdmin={Boolean(user.isAdmin)} />
           </AdminSessionProvider>
         </main>
